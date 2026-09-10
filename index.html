@@ -374,7 +374,7 @@
                     <div class="bg-white p-6 rounded-xl shadow-lg border border-slate-100">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="font-bold text-slate-700">% Kontribusi Revenue per Segmen</h3>
-                            <div class="text-xs text-slate-400" title="Reguler+Adhoc+Baru = revenue periode ini. Lost = revenue terakhir customer yg sekarang mati, sbg gambaran potensi yg hilang.">Reguler / Adhoc / Baru / Lost</div>
+                            <div class="text-xs text-slate-400" title="Reguler+Adhoc+Baru = revenue periode ini. Lost = revenue customer yg baru genap 3 bulan sepi PAS bulan ini (bukan akumulasi semua yg pernah mati), biar sebanding dgn kategori lain yg basisnya bulan berjalan.">Reguler / Adhoc / Baru / Lost</div>
                         </div>
                         <div class="h-64"><canvas id="chartSegmentRevenue"></canvas></div>
                     </div>
@@ -2864,15 +2864,21 @@
                         revBySegment.regular += point.rev;
                     }
                     // LOST (Target 91): Current Pool of Inactive. Zero for 3 months AND ever active before.
+                    // (kpiLostCustomers / the red line chart keep this full cumulative-pool definition.)
                     else if (point.rev === 0 && p1 === 0 && p2 === 0) {
                         const wasActiveBefore = timeline.some(t => t.gIdx < (point.gIdx - 2) && t.rev > 0);
                         if (wasActiveBefore) {
-                            // Revenue this customer used to bring in right before going silent -
-                            // shown as "potential/at-risk revenue" for the Lost segment in the bar chart.
                             const lastActive = [...timeline].reverse().find(t => t.gIdx < point.gIdx && t.rev > 0);
                             const lastRev = lastActive ? lastActive.rev : 0;
                             lostCustomers.push({ customer: cust, principle: princDisplay, month: point.month, rev: 0, vals: [0, p1, p2], lastRev });
-                            revBySegment.lostPotential += lastRev;
+
+                            // For the revenue-composition BAR CHART only: only count revenue from
+                            // customers who JUST crossed into "Lost" this exact month (p3 > 0, i.e.
+                            // this is the first of the 3 silent months), not the whole cumulative
+                            // pool of everyone who has ever gone dormant. This keeps Lost on the same
+                            // "this month's flow" basis as New/Regular/Adhoc - otherwise Lost's revenue
+                            // (years of accumulated dormant customers) dwarfs a single month's activity.
+                            if (p3 > 0) revBySegment.lostPotential += lastRev;
                         }
                     }
                     // ADHOC: transacted this period, but not brand-new and not a consistent
@@ -2903,7 +2909,7 @@
             const total = rev.new + rev.regular + rev.adhoc + rev.lostPotential;
             const pct = (v) => total > 0 ? (v / total * 100) : 0;
 
-            const labels = ['Reguler', 'Adhoc', 'Baru', 'Lost (potensi)'];
+            const labels = ['Reguler', 'Adhoc', 'Baru', 'Lost (baru bulan ini)'];
             const values = [pct(rev.regular), pct(rev.adhoc), pct(rev.new), pct(rev.lostPotential)];
             const colors = ['#16a34a', '#f59e0b', '#2563eb', '#dc2626'];
 
