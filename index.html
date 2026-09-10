@@ -1537,6 +1537,36 @@
         </div>
     </div>
 
+    <div id="bridgeSegModal"
+        class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-center justify-center z-[100]">
+        <div class="modal-overlay absolute w-full h-full bg-black opacity-50" onclick="closeModals()"></div>
+        <div
+            class="modal-container bg-white w-11/12 md:max-w-2xl mx-auto rounded shadow-lg z-50 overflow-y-auto max-h-[90vh]">
+            <div class="modal-content py-4 text-left px-6">
+                <div class="flex justify-between items-center pb-3 border-b border-slate-200">
+                    <div>
+                        <p id="bridgeSegModalTitle" class="text-2xl font-bold text-slate-800"></p>
+                        <p class="text-sm">Total: <span id="bridgeSegModalTotal" class="font-bold"></span></p>
+                    </div>
+                    <div class="cursor-pointer z-50" onclick="closeModals()"><i data-feather="x"></i></div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="bg-slate-50 text-slate-600">
+                            <tr>
+                                <th class="px-4 py-2">Customer</th>
+                                <th class="px-4 py-2 text-right">Perubahan</th>
+                                <th class="px-4 py-2 text-right">Sebelum</th>
+                                <th class="px-4 py-2 text-right">Sekarang</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bridgeSegTableBody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // --- PARSER (Compressed) ---
         async function parseAndProcessExcel(file) {
@@ -2822,17 +2852,56 @@
                     ${(() => {
                         const compactF = (x) => new Intl.NumberFormat('id-ID', { notation: "compact", compactDisplay: "short" }).format(x);
                         const signed = (x) => `${x > 0 ? '+' : (x < 0 ? '' : '')}${compactF(x)}`;
+                        const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
                         const segs = [
-                            { label: 'Growth Existing', val: growthSum, dot: 'bg-green-500', text: 'text-green-600' },
-                            { label: 'Decline Existing', val: declineExistingSum, dot: 'bg-red-400', text: 'text-red-600' },
-                            { label: 'New/Reactivated', val: newReactSum, dot: 'bg-indigo-500', text: 'text-indigo-600' },
-                            { label: `Lost Total (${lostCount})`, val: lostSum, dot: 'bg-rose-700', text: 'text-rose-700' },
+                            { label: 'Growth Existing', val: growthSum, dot: 'bg-green-500', text: 'text-green-600', items: growth },
+                            { label: 'Decline Existing', val: declineExistingSum, dot: 'bg-red-400', text: 'text-red-600', items: declineExisting },
+                            { label: 'New/Reactivated', val: newReactSum, dot: 'bg-indigo-500', text: 'text-indigo-600', items: reactivated },
+                            { label: `Lost Total (${lostCount})`, val: lostSum, dot: 'bg-rose-700', text: 'text-rose-700', items: lostItems },
                         ];
                         const totalMag = segs.reduce((s, x) => s + Math.abs(x.val), 0) || 1;
-                        const barHtml = segs.filter(s => s.val !== 0).map(s => {
+                        const visibleSegs = segs.filter(s => s.val !== 0);
+                        window.__bridgeSegs = visibleSegs; // dipakai openBridgeSegModal() utk daftar lengkap
+
+                        // Layer 1 (bawah): batang warna murni, TETAP dibungkus rounded+overflow-hidden
+                        // biar ujungnya rounded rapi seperti sebelumnya. Tidak ada tooltip di sini.
+                        const barHtml = visibleSegs.map(s => {
                             const pct = Math.max((Math.abs(s.val) / totalMag) * 100, 1.5);
-                            return `<div class="${s.dot.replace('bg-', 'bg-')}" style="width:${pct}%" title="${s.label}: ${signed(s.val)}"></div>`;
+                            return `<div class="${s.dot}" style="width:${pct}%"></div>`;
                         }).join('');
+
+                        // Layer 2 (atas): overlay transparan sama persis lebarnya, TIDAK di-clip,
+                        // isinya trigger hover/tap (JS, bukan CSS group-hover, supaya jalan di touchscreen
+                        // juga) + tooltip daftar customer per segmen.
+                        const overlayHtml = visibleSegs.map((s, idx) => {
+                            const pct = Math.max((Math.abs(s.val) / totalMag) * 100, 1.5);
+                            const tipId = `bridge-tip-${idx}`;
+                            const sorted = [...s.items].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+                            const top = sorted.slice(0, 6);
+                            const restCount = sorted.length - top.length;
+                            const rows = top.map(c => `
+                                <div class="flex items-center justify-between gap-3 py-0.5">
+                                    <span class="truncate text-slate-600">${esc(c.name)}</span>
+                                    <span class="font-semibold ${s.text} shrink-0">${signed(c.diff)}</span>
+                                </div>
+                            `).join('');
+                            const alignCls = idx === 0 ? 'left-0' : (idx === visibleSegs.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2');
+                            return `
+                                <div class="relative h-full" style="width:${pct}%"
+                                     onmouseenter="showBridgeTip('${tipId}')" onmouseleave="hideBridgeTip('${tipId}')"
+                                     onclick="event.stopPropagation(); showBridgeTip('${tipId}')">
+                                    <div id="${tipId}" class="bridge-tip absolute bottom-full ${alignCls} mb-2 hidden z-30 w-56 bg-white border border-slate-200 rounded-lg shadow-xl p-2.5 text-xs">
+                                        <div class="flex items-center justify-between mb-1.5 pb-1.5 border-b border-slate-100">
+                                            <span class="font-bold text-slate-700">${s.label}</span>
+                                            <span class="font-bold ${s.text}">${signed(s.val)}</span>
+                                        </div>
+                                        ${rows || '<p class="text-slate-400 italic">Tidak ada detail.</p>'}
+                                        ${restCount > 0 ? `<button onclick="event.stopPropagation(); openBridgeSegModal(${idx})" class="w-full text-left text-blue-600 hover:text-blue-800 hover:underline mt-1 pt-1 border-t border-slate-100">Lihat semua ${sorted.length} customer →</button>` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('');
+
                         const chipsHtml = segs.map(s => `
                             <div class="flex items-center gap-1.5">
                                 <span class="w-2 h-2 rounded-full ${s.dot} shrink-0"></span>
@@ -2851,8 +2920,13 @@
                                     <span class="${isUp ? 'text-green-600' : 'text-red-600'} ml-1">(${signed(totalDiff)})</span>
                                 </p>
                             </div>
-                            <div class="flex h-2.5 rounded-full overflow-hidden bg-slate-100 mb-3">
-                                ${barHtml}
+                            <div class="relative h-2.5 mb-3">
+                                <div class="flex h-2.5 rounded-full overflow-hidden bg-slate-100 absolute inset-0">
+                                    ${barHtml}
+                                </div>
+                                <div class="flex h-2.5 absolute inset-0">
+                                    ${overlayHtml}
+                                </div>
                             </div>
                             <div class="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-2 text-xs">
                                 ${chipsHtml}
@@ -3440,6 +3514,46 @@
             }).join('');
         }
         function closeModals() { document.querySelectorAll('.modal').forEach(m => m.classList.add('opacity-0', 'pointer-events-none')); }
+
+        // --- Bridge chart ("Kemana Perginya Revenue?") hover/tap tooltip + modal ---
+        function escHtml(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        function showBridgeTip(id) {
+            document.querySelectorAll('.bridge-tip').forEach(el => { if (el.id !== id) el.classList.add('hidden'); });
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('hidden');
+        }
+        function hideBridgeTip(id) {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        }
+        // Tap di luar segmen bar -> tutup semua tooltip yang lagi terbuka (penting utk mobile/tablet,
+        // karena di situ tidak ada mouseleave). onclick di segmen sendiri pakai stopPropagation supaya
+        // tidak langsung ke-close oleh listener ini di event yang sama.
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.bridge-tip').forEach(el => el.classList.add('hidden'));
+        });
+        function openBridgeSegModal(idx) {
+            const seg = (window.__bridgeSegs || [])[idx];
+            if (!seg) return;
+            const f = (x) => `${x > 0 ? '+' : ''}${new Intl.NumberFormat('id-ID').format(x)}`;
+            const plain = (x) => new Intl.NumberFormat('id-ID').format(x);
+            const sorted = [...seg.items].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+            document.getElementById('bridgeSegModalTitle').textContent = `${seg.label} (${sorted.length} customer)`;
+            const totalEl = document.getElementById('bridgeSegModalTotal');
+            totalEl.textContent = f(seg.val);
+            totalEl.className = 'font-bold ' + seg.text;
+            document.getElementById('bridgeSegTableBody').innerHTML = sorted.length ? sorted.map(c => `
+                <tr>
+                    <td class="px-4 py-2 font-medium">${escHtml(c.name)}</td>
+                    <td class="px-4 py-2 text-right font-bold ${c.diff >= 0 ? 'text-green-600' : 'text-red-600'}">${f(c.diff)}</td>
+                    <td class="px-4 py-2 text-right text-slate-400">${plain(c.prev)}</td>
+                    <td class="px-4 py-2 text-right text-slate-600">${plain(c.curr)}</td>
+                </tr>
+            `).join('') : `<tr><td colspan="4" class="text-center p-4 text-slate-400">No data</td></tr>`;
+            document.getElementById('bridgeSegModal').classList.remove('opacity-0', 'pointer-events-none');
+        }
         feather.replace();
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
