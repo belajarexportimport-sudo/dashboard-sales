@@ -54,6 +54,20 @@
         input[type=number] {
             -moz-appearance: textfield;
         }
+
+        /* --- PRINT / DOWNLOAD PDF --- */
+        @media print {
+            .no-print, #uploadArea, .modal { display: none !important; }
+            body { background: #fff !important; }
+            main { padding: 0 !important; max-width: 100% !important; }
+            /* Tables/containers use overflow-x-auto + sticky header for the screen;
+               for print we want everything laid out flat so nothing is clipped or cut off. */
+            .overflow-x-auto, .overflow-y-auto { overflow: visible !important; max-height: none !important; }
+            .sticky-header th, nav, .sticky { position: static !important; top: auto !important; }
+            .shadow-md, .shadow-lg, .shadow-sm, .shadow-xl { box-shadow: none !important; }
+            .bg-white, .rounded-xl { break-inside: avoid; }
+            canvas { max-width: 100% !important; }
+        }
     </style>
 </head>
 
@@ -62,7 +76,7 @@
 
     <!-- Navbar -->
     <nav
-        class="bg-white border-b border-blue-100 px-6 py-3 flex items-center justify-between sticky top-0 z-50 shadow-sm">
+        class="no-print bg-white border-b border-blue-100 px-6 py-3 flex items-center justify-between sticky top-0 z-50 shadow-sm">
         <div class="flex items-center gap-4">
             <div class="flex items-center gap-2 group/logo relative">
                 <!-- Hidden Logo Upload -->
@@ -182,7 +196,7 @@
 
         <div id="dashboardContent" class="hidden space-y-6">
             <!-- TAB SWITCHER -->
-            <div class="flex border-b border-slate-200 mb-2">
+            <div class="no-print flex border-b border-slate-200 mb-2">
                 <button onclick="switchTab('main')" id="tabMain"
                     class="px-6 py-2 font-bold text-sm border-b-2 border-blue-600 text-blue-600 transition">Main
                     Dashboard</button>
@@ -258,6 +272,18 @@
                             </div>
                             <span class="text-sm font-bold text-slate-600 toggle-label">Forecast: OFF</span>
                         </label>
+
+                        <!-- DOWNLOAD / EXPORT -->
+                        <div class="flex gap-2 no-print">
+                            <button onclick="downloadExcel()" title="Download Excel (Summary + Monthly Performance + Detail dengan filter dropdown)"
+                                class="bg-green-50 hover:bg-green-100 text-green-700 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition border border-green-200">
+                                <i data-feather="download" class="w-4 h-4"></i> Excel
+                            </button>
+                            <button onclick="downloadPDF()" title="Download PDF sesuai tampilan & filter saat ini"
+                                class="bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition border border-rose-200">
+                                <i data-feather="file-text" class="w-4 h-4"></i> PDF
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -1469,20 +1495,10 @@
 
                         // 0. Detect "Cust Account ..." transactional sheets (new source format:
                         //    per-transaction rows with Customer/Revenue/Date, e.g. "Cust Account West/East")
-                        //    Only "West" is processed - "East"'s Name/sales-rep header column is
-                        //    broken in the source file ("Column 1" instead of "Name"), which makes
-                        //    every East row misattributed to "House". Skip it until that's fixed.
-                        const custAccountSheetNames = workbook.SheetNames.filter(n => {
-                            const lower = n.toLowerCase();
-                            return lower.includes("cust account") && lower.includes("west");
-                        });
-                        const skippedEastSheets = workbook.SheetNames.filter(n => {
-                            const lower = n.toLowerCase();
-                            return lower.includes("cust account") && !lower.includes("west");
-                        });
-                        if (skippedEastSheets.length > 0) {
-                            console.warn(`Sales Report: sheet berikut di-SKIP (bukan West, atau header rusak): ${skippedEastSheets.join(", ")}`);
-                        }
+                        //    Both West and East are processed - East's Name/sales-rep header used
+                        //    to be broken ("Column 1" instead of "Name"), but parseCustAccountSheet
+                        //    now falls back to position when that happens, so it's safe to include.
+                        const custAccountSheetNames = workbook.SheetNames.filter(n => n.toLowerCase().includes("cust account"));
                         let custAccountData = [];
                         custAccountSheetNames.forEach(sn => {
                             console.log(`Cust Account sheet found: ${sn}`);
@@ -1561,6 +1577,15 @@
                 gp: findCol(["gp"]),
                 status: findCol(["status"])
             };
+            // Fallback for sheets where the sales-rep column header wasn't renamed from the
+            // template default (e.g. "Cust Account East" literally has "Column 1" instead of
+            // "Name"). The sheet LAYOUT is otherwise identical across West/East - the sales-rep
+            // column always sits immediately left of "Account Cust" - so use that position
+            // instead of leaving everyone in that sheet mislabeled as "House".
+            if (idx.name === -1 && idx.accountCust > 0) {
+                idx.name = idx.accountCust - 1;
+                console.warn(`Cust Account sheet: kolom "Name" tidak ketemu by-header, pakai fallback posisi kolom ${idx.name} (sebelah kiri "Account Cust").`);
+            }
             if (idx.accountName === -1 || idx.revenue === -1) {
                 console.warn("Cust Account sheet: required columns not found, skipping.");
                 return [];
@@ -2157,22 +2182,11 @@
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
 
-                        // Fokus ke sheet "Cust Account West" saja - sheet "... East" sengaja
-                        // di-skip karena header kolom "Name"-nya rusak di source file (jadi
-                        // "Column 1"), sehingga seluruh sales name dari East salah kebaca
-                        // "House". Daripada nge-filter datanya (yang tetap salah atribusi),
-                        // sheet itu langsung tidak diproses sampai header-nya dibetulkan.
-                        const custAccountSheetNames = workbook.SheetNames.filter(n => {
-                            const lower = n.toLowerCase();
-                            return lower.includes("cust account") && lower.includes("west");
-                        });
-                        const skippedEastSheets = workbook.SheetNames.filter(n => {
-                            const lower = n.toLowerCase();
-                            return lower.includes("cust account") && !lower.includes("west");
-                        });
-                        if (skippedEastSheets.length > 0) {
-                            console.warn(`Tracker: sheet berikut di-SKIP (bukan West, atau header rusak): ${skippedEastSheets.join(", ")}`);
-                        }
+                        // Proses semua sheet "Cust Account ..." - West dan East. Header kolom
+                        // "Name" di East dulu rusak (jadi "Column 1"), tapi parseCustAccountSheet
+                        // sekarang fallback ke posisi kolom kalau header persisnya nggak ketemu,
+                        // jadi East aman diikutkan lagi.
+                        const custAccountSheetNames = workbook.SheetNames.filter(n => n.toLowerCase().includes("cust account"));
                         let custAccountData = [];
                         custAccountSheetNames.forEach(sn => {
                             const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sn], { header: 1 });
@@ -2180,7 +2194,7 @@
                         });
 
                         if (custAccountData.length === 0) {
-                            reject(new Error("Sheet 'Cust Account West' tidak ditemukan (atau kosong) di file ini."));
+                            reject(new Error("Sheet 'Cust Account West/East' tidak ditemukan (atau kosong) di file ini."));
                             return;
                         }
                         resolve(custAccountData);
@@ -2407,6 +2421,138 @@
 
             renderPerformanceTable(filteredData, y, p, c, sales, filteredTrackerData);
             renderMonthlyAnalysis(filteredData, y, m, p, c, sales);
+
+            // Snapshot of what's currently on screen, used by Download Excel/PDF so the
+            // export always matches the active filters without re-deriving them.
+            window.currentExport = {
+                filteredData, filteredTrackerData,
+                year: y, month: m, principle: p, customer: c, sales,
+                lane: l, commodity: cmd, serviceType: s
+            };
+        }
+
+        // --- DOWNLOAD / EXPORT ---
+
+        // PDF: uses the browser's native print-to-PDF, driven by the @media print rules
+        // in <style>. This guarantees the PDF matches exactly what's on screen right now
+        // (same filters, same numbers) without needing a separate rendering pipeline.
+        function downloadPDF() {
+            if (!window.currentExport) { alert("Belum ada data untuk didownload. Upload Sales Report dulu."); return; }
+            const ex = window.currentExport;
+            const oldTitle = document.title;
+            const label = `SalesDashboard_${ex.year}${ex.month !== 'all' ? '_' + ex.month : ''}${ex.sales !== 'all' ? '_' + ex.sales.replace(/\s+/g, '') : ''}`;
+            document.title = label; // becomes the browser's default "Save as PDF" filename
+            window.print();
+            document.title = oldTitle;
+        }
+
+        // Excel: multi-sheet workbook built from the SAME filtered dataset shown on screen -
+        // Summary (KPIs + active filters), Monthly Performance (mirrors the on-screen table),
+        // Top Customers, and a flat Detail Data sheet with a native Excel AutoFilter turned on
+        // (dropdown arrows on every column header) so the recipient can slice it further
+        // (by Sales, Principle, Month, etc.) directly inside Excel.
+        function downloadExcel() {
+            if (!window.currentExport) { alert("Belum ada data untuk didownload. Upload Sales Report dulu."); return; }
+            const ex = window.currentExport;
+            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const wb = XLSX.utils.book_new();
+
+            // ---- Sheet 1: Summary ----
+            let totalR = 0, totalG = 0, totalW = 0, totalP = 0, totalD = 0;
+            ex.filteredData.forEach(row => row.monthlyData.forEach(md => {
+                if (ex.month === 'all' || md.month === ex.month) {
+                    totalR += md.revenue; totalG += (md.gp || 0); totalW += (md.weight || 0);
+                    totalP += (md.pcs || 0); totalD += (md.dimension || 0);
+                }
+            }));
+            const wsSummary = XLSX.utils.aoa_to_sheet([
+                ["Sales Dashboard - Export Summary"],
+                ["Generated at", new Date().toLocaleString('id-ID')],
+                [],
+                ["Filter Applied"],
+                ["Year", ex.year], ["Month", ex.month], ["Principle", ex.principle],
+                ["Customer", ex.customer], ["Sales", ex.sales], ["Lane", ex.lane],
+                ["Commodity", ex.commodity], ["Service Type", ex.serviceType],
+                [],
+                ["KPI Totals (sesuai filter di atas)"],
+                ["Revenue", totalR], ["GP", totalG], ["Weight", totalW],
+                ["Pcs", totalP], ["Dimension/CBM", totalD],
+            ]);
+            wsSummary['!cols'] = [{ wch: 24 }, { wch: 28 }];
+            XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+
+            // ---- Sheet 2: Monthly Performance (mirrors the on-screen table) ----
+            const perfHeader = ["Month", "Revenue", "Diff (IDR)", "Growth %", "Act. Cust", "Cust Diff", "Cust Growth %", "Tracker (Actual)", "Report vs Tracker"];
+            const monthAgg = {};
+            ex.filteredData.forEach(row => row.monthlyData.forEach(md => {
+                const k = `${row.year}-${md.month}`;
+                if (!monthAgg[k]) monthAgg[k] = { r: 0, customers: new Set() };
+                monthAgg[k].r += md.revenue;
+                if (md.revenue > 0) monthAgg[k].customers.add(row.customer.trim().toLowerCase());
+            }));
+            const trackerAgg = {};
+            (ex.filteredTrackerData || []).forEach(row => row.monthlyData.forEach(md => {
+                const k = `${row.year}-${md.month}`;
+                trackerAgg[k] = (trackerAgg[k] || 0) + md.revenue;
+            }));
+            const perfRows = [perfHeader];
+            months.forEach((mn, i) => {
+                const key = `${ex.year}-${mn}`;
+                const curr = monthAgg[key] || { r: 0, customers: new Set() };
+                const prevKey = i === 0 ? `${parseInt(ex.year) - 1}-Dec` : `${ex.year}-${months[i - 1]}`;
+                const prev = monthAgg[prevKey] || { r: 0, customers: new Set() };
+                const diffRev = curr.r - prev.r;
+                const growRev = prev.r > 0 ? diffRev / prev.r : (curr.r > 0 ? 1 : 0);
+                const currC = curr.customers.size, prevC = prev.customers.size;
+                const diffC = currC - prevC;
+                const growC = prevC > 0 ? diffC / prevC : (currC > 0 ? 1 : 0);
+                const trackerR = trackerAgg[key] || 0;
+                const deltaTR = trackerR !== 0 ? curr.r - trackerR : "";
+                perfRows.push([mn, curr.r, diffRev, growRev, currC, diffC, growC, trackerR || "", deltaTR]);
+            });
+            const wsPerf = XLSX.utils.aoa_to_sheet(perfRows);
+            wsPerf['!cols'] = [{ wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 16 }];
+            for (let r = 2; r <= perfRows.length; r++) {
+                const cD = wsPerf[`D${r}`]; if (cD) cD.z = '0.0%';
+                const cG = wsPerf[`G${r}`]; if (cG) cG.z = '0.0%';
+                ['B', 'C', 'H', 'I'].forEach(col => {
+                    const cell = wsPerf[`${col}${r}`];
+                    if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+                });
+            }
+            XLSX.utils.book_append_sheet(wb, wsPerf, "Monthly Performance");
+
+            // ---- Sheet 3: Top Customers (mirrors the on-screen widget) ----
+            const custMap = {};
+            ex.filteredData.forEach(row => row.monthlyData.forEach(md => {
+                if (ex.month !== 'all' && md.month !== ex.month) return;
+                const k = row.customer;
+                if (!custMap[k]) custMap[k] = { customer: k, principle: row.principle, revenue: 0, gp: 0 };
+                custMap[k].revenue += md.revenue; custMap[k].gp += (md.gp || 0);
+            }));
+            const topRows = [["Customer", "Principle", "Revenue", "GP"]];
+            Object.values(custMap).sort((a, b) => b.revenue - a.revenue).slice(0, 20)
+                .forEach(c => topRows.push([c.customer, c.principle, c.revenue, c.gp]));
+            const wsTop = XLSX.utils.aoa_to_sheet(topRows);
+            wsTop['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 16 }, { wch: 14 }];
+            XLSX.utils.book_append_sheet(wb, wsTop, "Top Customers");
+
+            // ---- Sheet 4: Detail Data - flat rows with a native Excel AutoFilter so the
+            // recipient gets real dropdown filter arrows on every column when they open it. ----
+            const detailHeader = ["Year", "Month", "Principle", "Customer", "Service Type", "Sales Name", "Revenue", "GP", "Weight", "Pcs", "Dimension"];
+            const detailRows = [detailHeader];
+            ex.filteredData.forEach(row => row.monthlyData.forEach(md => {
+                if (!md.revenue && !md.gp && !md.weight && !md.pcs) return; // skip empty months
+                detailRows.push([row.year, md.month, row.principle, row.customer, row.serviceType,
+                    row.salesName || "HOUSE", md.revenue || 0, md.gp || 0, md.weight || 0, md.pcs || 0, md.dimension || 0]);
+            }));
+            const wsDetail = XLSX.utils.aoa_to_sheet(detailRows);
+            wsDetail['!cols'] = [{ wch: 6 }, { wch: 6 }, { wch: 14 }, { wch: 32 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 10 }];
+            wsDetail['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: detailRows.length - 1, c: detailHeader.length - 1 } }) };
+            XLSX.utils.book_append_sheet(wb, wsDetail, "Detail Data");
+
+            const fname = `Sales_Dashboard_${ex.year}${ex.month !== 'all' ? '_' + ex.month : ''}_${ex.sales !== 'all' ? ex.sales.replace(/\s+/g, '') : 'AllSales'}.xlsx`;
+            XLSX.writeFile(wb, fname);
         }
 
         // --- ANALYSIS LOGIC ---
