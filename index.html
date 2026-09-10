@@ -2450,6 +2450,29 @@
                 return newRow;
             }).filter(d => d !== null); // Remove nulls
 
+            // Separate dataset WITHOUT the year lock, same other filters applied — needed because
+            // renderMonthlyAnalysis compares across years (YoY mode, and MoM when the selected
+            // month is January and needs December of the previous year). Using the year-locked
+            // `filteredData` above for that would always show prevRevenue = 0 for any cross-year
+            // comparison, which makes every month look like "Up" even when it's actually down.
+            const filteredDataForAnalysis = activeData.map(row => {
+                if (p !== 'all' && row.principle != p) return null;
+                if (c !== 'all' && row.customer != c) return null;
+                if (s !== 'all' && row.serviceType != s) return null;
+                if (sales !== 'all' && !salesEq(row.salesName, sales)) return null;
+
+                const newRow = { ...row, monthlyData: [] };
+                row.monthlyData.forEach(mon => {
+                    if (l !== 'all' && mon.lane !== l) return;
+                    if (cmd !== 'all') {
+                        const cVal = (mon.commodity || "").trim();
+                        if (cVal !== cmd.trim()) return;
+                    }
+                    newRow.monthlyData.push(mon);
+                });
+                return newRow;
+            }).filter(d => d !== null);
+
             calculateKPIs(filteredData, m);
             renderCharts(filteredData);
             renderTopCustomers(filteredData, m);
@@ -2475,7 +2498,7 @@
             });
 
             renderPerformanceTable(filteredData, y, p, c, sales, filteredTrackerData);
-            renderMonthlyAnalysis(filteredData, y, m, p, c, sales);
+            renderMonthlyAnalysis(filteredDataForAnalysis, y, m, p, c, sales);
 
             // Snapshot of what's currently on screen, used by Download Excel/PDF so the
             // export always matches the active filters without re-deriving them.
