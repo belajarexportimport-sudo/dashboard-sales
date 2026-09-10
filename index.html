@@ -342,6 +342,14 @@
                         <div class="text-xl font-black text-green-800" id="kpiRegularCustomers">-</div>
                         <div class="text-[9px] text-green-500 mt-1 leading-tight">>3mo Active</div>
                     </div>
+                    <!-- ADHOC CARD -->
+                    <div class="bg-gradient-to-br from-amber-50 to-white p-4 rounded-xl shadow-md border border-amber-100 cursor-pointer hover:bg-amber-100 hover:-translate-y-1 hover:shadow-lg transition duration-300 relative group"
+                        onclick="showAdhocCustomerModal()">
+                        <div class="text-[10px] font-bold text-amber-600 uppercase flex items-center gap-1">Adhoc <i
+                                data-feather="shuffle" class="w-3 h-3"></i></div>
+                        <div class="text-xl font-black text-amber-800" id="kpiAdhocCustomers">-</div>
+                        <div class="text-[9px] text-amber-500 mt-1 leading-tight">Occasional order</div>
+                    </div>
                     <!-- LOST CARD -->
                     <div class="bg-gradient-to-br from-red-50 to-white p-4 rounded-xl shadow-md border border-red-100 cursor-pointer hover:bg-red-100 hover:-translate-y-1 hover:shadow-lg transition duration-300 relative group"
                         onclick="showLostCustomerModal()">
@@ -355,12 +363,21 @@
                 <!-- MONTHLY ANALYSIS -->
                 <div id="monthlyAnalysis" class="hidden mb-6"></div>
 
-                <div class="bg-white p-6 rounded-xl shadow-lg border border-slate-100">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="font-bold text-slate-700">Customer Health Trend (Full Year)</h3>
-                        <div class="text-xs text-slate-400">Tracks New (Blue), Regular (Green), and Lost (Red)</div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="bg-white p-6 rounded-xl shadow-lg border border-slate-100">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-slate-700">Customer Health Trend (Full Year)</h3>
+                            <div class="text-xs text-slate-400">Tracks New (Blue), Regular (Green), and Lost (Red)</div>
+                        </div>
+                        <div class="h-64"><canvas id="chartCustomerHealth"></canvas></div>
                     </div>
-                    <div class="h-64"><canvas id="chartCustomerHealth"></canvas></div>
+                    <div class="bg-white p-6 rounded-xl shadow-lg border border-slate-100">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-slate-700">% Kontribusi Revenue per Segmen</h3>
+                            <div class="text-xs text-slate-400" title="Reguler+Adhoc+Baru = revenue periode ini. Lost = revenue terakhir customer yg sekarang mati, sbg gambaran potensi yg hilang.">Reguler / Adhoc / Baru / Lost</div>
+                        </div>
+                        <div class="h-64"><canvas id="chartSegmentRevenue"></canvas></div>
+                    </div>
                 </div>
 
                 <!-- Charts Grid -->
@@ -1482,6 +1499,36 @@
             </div>
         </div>
     </div>
+    <div id="acModal"
+        class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-center justify-center z-[100]">
+        <div class="modal-overlay absolute w-full h-full bg-black opacity-50" onclick="closeModals()"></div>
+        <div
+            class="modal-container bg-white w-11/12 md:max-w-3xl mx-auto rounded shadow-lg z-50 overflow-y-auto max-h-[90vh]">
+            <div class="modal-content py-4 text-left px-6">
+                <div class="flex justify-between items-center pb-3 border-b border-slate-200">
+                    <p class="text-2xl font-bold text-amber-800">Adhoc Customers List</p>
+                    <div class="cursor-pointer z-50" onclick="closeModals()"><i data-feather="x"></i></div>
+                </div>
+                <div class="bg-amber-50 text-amber-800 p-3 rounded-lg text-sm my-3 mb-4"><strong>Criteria:</strong>
+                    Active (Rev > 0) at <span id="acModalMonth" class="font-bold"></span>, tapi bukan customer baru dan
+                    tidak transaksi 3 bulan berturut-turut (order sesekali/tidak rutin).
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="bg-slate-50 text-slate-600">
+                            <tr>
+                                <th class="px-4 py-2">Customer</th>
+                                <th class="px-4 py-2">Principle</th>
+                                <th class="px-4 py-2 text-right">Current</th>
+                                <th class="px-4 py-2 text-right">Prev 2 Mos</th>
+                            </tr>
+                        </thead>
+                        <tbody id="acTableBody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
         // --- PARSER (Compressed) ---
@@ -2407,6 +2454,7 @@
             const stats = getTraderStats(activeData, y, m, p, c, sales);
             updateTraderKPIs(stats, y, m);
             renderCustomerHealthChart(activeData, y, p, c, sales);
+            renderSegmentRevenueChart(stats);
 
             // Sales Tracker (comparator) - filtered the same way as Sales Report, but kept as a
             // separate dataset. Never merged into allData/filteredData.
@@ -2769,7 +2817,9 @@
                 });
             });
 
-            const newTraders = [], lostCustomers = [], regularCustomers = [];
+            const newTraders = [], lostCustomers = [], regularCustomers = [], adhocCustomers = [];
+            // Revenue contributed by each segment (for the % composition bar chart)
+            const revBySegment = { new: 0, regular: 0, adhoc: 0, lostPotential: 0 };
 
             // 2. Status Analysis (Global)
             Object.keys(aggGlobal).forEach(cust => {
@@ -2806,29 +2856,71 @@
                     // If they started in this month, last month, or 2 months ago, they are still "New"
                     if (point.rev > 0 && point.gIdx >= startIdx && point.gIdx <= (startIdx + 2)) {
                         newTraders.push({ customer: cust, principle: princDisplay, month: point.month, rev: point.rev, prev: [p1, p2, p3] });
+                        revBySegment.new += point.rev;
                     }
                     // REGULAR (Target 18): Consistent (3 months straight) AND no longer in "New" phase
                     else if (point.rev > 0 && p1 > 0 && p2 > 0 && point.gIdx > (startIdx + 2)) {
                         regularCustomers.push({ customer: cust, principle: princDisplay, month: point.month, rev: point.rev, vals: [point.rev, p1, p2] });
+                        revBySegment.regular += point.rev;
                     }
                     // LOST (Target 91): Current Pool of Inactive. Zero for 3 months AND ever active before.
                     else if (point.rev === 0 && p1 === 0 && p2 === 0) {
                         const wasActiveBefore = timeline.some(t => t.gIdx < (point.gIdx - 2) && t.rev > 0);
                         if (wasActiveBefore) {
-                            lostCustomers.push({ customer: cust, principle: princDisplay, month: point.month, rev: 0, vals: [0, p1, p2] });
+                            // Revenue this customer used to bring in right before going silent -
+                            // shown as "potential/at-risk revenue" for the Lost segment in the bar chart.
+                            const lastActive = [...timeline].reverse().find(t => t.gIdx < point.gIdx && t.rev > 0);
+                            const lastRev = lastActive ? lastActive.rev : 0;
+                            lostCustomers.push({ customer: cust, principle: princDisplay, month: point.month, rev: 0, vals: [0, p1, p2], lastRev });
+                            revBySegment.lostPotential += lastRev;
                         }
+                    }
+                    // ADHOC: transacted this period, but not brand-new and not a consistent
+                    // 3-month-straight regular - i.e. an occasional / one-off buyer.
+                    else if (point.rev > 0) {
+                        adhocCustomers.push({ customer: cust, principle: princDisplay, month: point.month, rev: point.rev, vals: [point.rev, p1, p2] });
+                        revBySegment.adhoc += point.rev;
                     }
                 });
             });
-            console.log(`DEBUG STATS [${year} ${month}]: NT=${newTraders.length}, RC=${regularCustomers.length}, LC=${lostCustomers.length}`);
-            return { newTraders, lostCustomers, regularCustomers };
+            console.log(`DEBUG STATS [${year} ${month}]: NT=${newTraders.length}, RC=${regularCustomers.length}, LC=${lostCustomers.length}, AC=${adhocCustomers.length}`);
+            return { newTraders, lostCustomers, regularCustomers, adhocCustomers, revBySegment };
         }
         function updateTraderKPIs(stats, year, month) {
             document.getElementById('kpiNewTraders').textContent = stats.newTraders.length; newTradersList = stats.newTraders;
             document.getElementById('kpiLostCustomers').textContent = stats.lostCustomers.length; lostCustomersList = stats.lostCustomers;
             document.getElementById('kpiRegularCustomers').textContent = stats.regularCustomers.length; regularCustomersList = stats.regularCustomers;
+            document.getElementById('kpiAdhocCustomers').textContent = stats.adhocCustomers.length; adhocCustomersList = stats.adhocCustomers;
             const t = (month === 'all') ? `Year ${year}` : `${month} ${year}`;
-            ['ntModalMonth', 'lcModalMonth', 'rcModalMonth'].forEach(id => document.getElementById(id).textContent = t);
+            ['ntModalMonth', 'lcModalMonth', 'rcModalMonth', 'acModalMonth'].forEach(id => document.getElementById(id).textContent = t);
+        }
+
+        // --- Segment Revenue Composition (single bar chart: % of revenue per customer segment) ---
+        function renderSegmentRevenueChart(stats) {
+            const el = document.getElementById('chartSegmentRevenue');
+            if (!el) return;
+            const rev = stats.revBySegment || { new: 0, regular: 0, adhoc: 0, lostPotential: 0 };
+            const total = rev.new + rev.regular + rev.adhoc + rev.lostPotential;
+            const pct = (v) => total > 0 ? (v / total * 100) : 0;
+
+            const labels = ['Reguler', 'Adhoc', 'Baru', 'Lost (potensi)'];
+            const values = [pct(rev.regular), pct(rev.adhoc), pct(rev.new), pct(rev.lostPotential)];
+            const colors = ['#16a34a', '#f59e0b', '#2563eb', '#dc2626'];
+
+            if (charts['seg']) charts['seg'].destroy();
+            charts['seg'] = new Chart(el.getContext('2d'), {
+                type: 'bar',
+                data: { labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 6, maxBarThickness: 60 }] },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: (ctx) => ctx.parsed.x.toFixed(1) + '%' } }
+                    },
+                    scales: { x: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' }, grid: { borderDash: [2, 4], color: '#e2e8f0' } }, y: { grid: { display: false } } }
+                }
+            });
         }
 
         // --- NEW: Props Handler ---
@@ -3126,6 +3218,7 @@
         function showNewTraderModal() { document.getElementById('ntTableBody').innerHTML = genTable(newTradersList, 'blue'); document.getElementById('ntModal').classList.remove('opacity-0', 'pointer-events-none'); }
         function showLostCustomerModal() { document.getElementById('lcTableBody').innerHTML = genTable(lostCustomersList, 'red'); document.getElementById('lcModal').classList.remove('opacity-0', 'pointer-events-none'); }
         function showRegularCustomerModal() { document.getElementById('rcTableBody').innerHTML = genTable(regularCustomersList, 'green'); document.getElementById('rcModal').classList.remove('opacity-0', 'pointer-events-none'); }
+        function showAdhocCustomerModal() { document.getElementById('acTableBody').innerHTML = genTable(adhocCustomersList, 'blue'); document.getElementById('acModal').classList.remove('opacity-0', 'pointer-events-none'); }
         function genTable(l, c) {
             if (!l || l.length == 0) return `<tr><td colspan="4" class="text-center p-4 text-slate-400">No data</td></tr>`;
             const cl = c == 'red' ? 'text-red-600' : c == 'green' ? 'text-green-600' : 'text-blue-600';
