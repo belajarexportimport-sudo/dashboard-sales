@@ -149,10 +149,16 @@
                     class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition shadow-md shadow-emerald-200">
                     <i data-feather="truck"></i> Upload Shipment List
                 </button>
+                <button onclick="document.getElementById('trackerInput').click()"
+                    title="File tracker per-transaksi (sheet 'Cust Account West/East'). Data ini TIDAK menimpa Sales Report - hanya ditampilkan sbg kolom pembanding (Actual) di tabel Monthly Performance."
+                    class="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition shadow-md shadow-violet-200">
+                    <i data-feather="users"></i> Upload Sales Tracker
+                </button>
             </div>
         </div>
         <input type="file" id="fileInput" class="hidden" accept=".xlsx, .xls">
         <input type="file" id="shipmentInput" class="hidden" accept=".xlsx, .xls">
+        <input type="file" id="trackerInput" class="hidden" accept=".xlsx, .xls">
     </nav>
 
     <main class="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -355,8 +361,8 @@
                 <div class="bg-white rounded-xl shadow-lg border border-slate-100 overflow-hidden">
                     <div
                         class="px-6 py-4 border-b border-slate-100 font-bold flex justify-between items-center bg-slate-50">
-                        <span>Monthly Performance Report v1.16</span>
-                        <span class="text-xs text-slate-400 font-normal">Budgets & Sales Names are auto-saved</span>
+                        <span>Monthly Performance Report v1.17</span>
+                        <span class="text-xs text-slate-400 font-normal">Budgets & Sales Names are auto-saved &middot; kolom ungu = Sales Tracker (pembanding)</span>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-sm text-left sticky-header">
@@ -371,6 +377,8 @@
                                     <th class="px-3 py-3 text-right">Act. Cust</th>
                                     <th class="px-3 py-3 text-right">Diff</th>
                                     <th class="px-3 py-3 text-right">Growth %</th>
+                                    <th class="px-3 py-3 text-right bg-violet-50 w-32" title="Data dari Upload Sales Tracker (sheet Cust Account West/East). Ini PEMBANDING, bukan pengganti angka Sales Report.">Tracker (Actual)</th>
+                                    <th class="px-3 py-3 text-right bg-violet-50 w-24" title="Selisih Sales Report vs Sales Tracker untuk bulan yang sama">Report vs Tracker</th>
                                 </tr>
                             </thead>
                             <tbody id="performanceTableBody" class="divide-y divide-slate-100"></tbody>
@@ -1459,7 +1467,33 @@
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
 
-                        // 1. Process Raw Sales Data
+                        // 0. Detect "Cust Account ..." transactional sheets (new source format:
+                        //    per-transaction rows with Customer/Revenue/Date, e.g. "Cust Account West/East")
+                        //    Only "West" is processed - "East"'s Name/sales-rep header column is
+                        //    broken in the source file ("Column 1" instead of "Name"), which makes
+                        //    every East row misattributed to "House". Skip it until that's fixed.
+                        const custAccountSheetNames = workbook.SheetNames.filter(n => {
+                            const lower = n.toLowerCase();
+                            return lower.includes("cust account") && lower.includes("west");
+                        });
+                        const skippedEastSheets = workbook.SheetNames.filter(n => {
+                            const lower = n.toLowerCase();
+                            return lower.includes("cust account") && !lower.includes("west");
+                        });
+                        if (skippedEastSheets.length > 0) {
+                            console.warn(`Sales Report: sheet berikut di-SKIP (bukan West, atau header rusak): ${skippedEastSheets.join(", ")}`);
+                        }
+                        let custAccountData = [];
+                        custAccountSheetNames.forEach(sn => {
+                            console.log(`Cust Account sheet found: ${sn}`);
+                            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sn], { header: 1 });
+                            custAccountData = custAccountData.concat(parseCustAccountSheet(rows));
+                        });
+
+                        // 1. Process Raw Sales Data (legacy "Rev Rifai"-style cumulative pivot format).
+                        //    Skip this if the FIRST sheet is itself a "Cust Account" transactional sheet,
+                        //    otherwise the pivot parser misreads it as garbage rows.
+                        const firstSheetIsCustAccount = custAccountSheetNames.includes(workbook.SheetNames[0]);
                         const rawData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
                         window.rawSheetData = rawData;
 
@@ -1479,13 +1513,147 @@
                             }
                         }
 
-                        const processed = processRawData(rawData);
+                        const pivotProcessed = firstSheetIsCustAccount ? [] : processRawData(rawData);
+                        const processed = pivotProcessed.concat(custAccountData);
+
+                        if (custAccountData.length > 0) {
+                            console.log(`Cust Account: parsed ${custAccountData.length} aggregated customer/year rows from ${custAccountSheetNames.length} sheet(s).`);
+                        }
+
                         saveDataToStorage(rawData); // Save for persistence
                         resolve(processed);
                     } catch (err) { reject(err); }
                 };
                 reader.readAsArrayBuffer(file);
             });
+        }
+
+        // --- PARSER: "Cust Account West/East" transactional tracker format ---
+        // Row-per-transaction sheet with columns like:
+        // Name (sales) | Account Cust | Account Name (customer) | AWB | Trade Line | Product |
+        // Origin | Dest | CWT | Date | Month | Year | Week | Revenue | GP | % | Status
+        // Only Status = "Win" rows count as actual/realized trading revenue.
+        // Exact-duplicate rows (common in this tracker - copy/pasted blank template rows,
+        // and occasional accidental double-entries) are de-duplicated before aggregating.
+        function parseCustAccountSheet(rows) {
+            let headerRowIdx = -1;
+            for (let i = 0; i < Math.min(10, rows.length); i++) {
+                const rStr = JSON.stringify(rows[i] || []).toLowerCase();
+                if (rStr.includes("account name") && rStr.includes("revenue")) { headerRowIdx = i; break; }
+            }
+            if (headerRowIdx === -1) return [];
+
+            const header = (rows[headerRowIdx] || []).map(h => (h || "").toString().toLowerCase().trim());
+            const findCol = (keys) => header.findIndex(h => keys.some(k => h.includes(k)));
+
+            const idx = {
+                name: header.findIndex(h => h === "name"), // exact match: avoid matching inside "account name"
+                accountCust: findCol(["account cust"]),
+                accountName: findCol(["account name"]),
+                awb: findCol(["awb"]),
+                tradeLine: findCol(["trade line"]),
+                product: findCol(["product"]),
+                cwt: findCol(["cwt"]),
+                date: findCol(["date"]),
+                month: findCol(["month"]),
+                year: findCol(["year"]),
+                revenue: findCol(["revenue"]),
+                gp: findCol(["gp"]),
+                status: findCol(["status"])
+            };
+            if (idx.accountName === -1 || idx.revenue === -1) {
+                console.warn("Cust Account sheet: required columns not found, skipping.");
+                return [];
+            }
+
+            const monthAliasID = {
+                jan: "Jan", feb: "Feb", mar: "Mar", apr: "Apr", mei: "May", may: "May",
+                jun: "Jun", jul: "Jul", agu: "Aug", aug: "Aug", sep: "Sep",
+                okt: "Oct", oct: "Oct", nov: "Nov", des: "Dec", dec: "Dec"
+            };
+            const monthsList = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+            const agg = new Map();
+            const seenRows = new Set();
+            let dupCount = 0, skippedNonWin = 0;
+
+            for (let i = headerRowIdx + 1; i < rows.length; i++) {
+                const r = rows[i];
+                if (!r) continue;
+                const custRaw = (r[idx.accountName] || "").toString().trim();
+                if (!custRaw) continue;
+
+                // De-dup: skip a row if every relevant column matches a row already seen
+                const keyCols = [idx.name, idx.accountCust, idx.accountName, idx.awb, idx.tradeLine, idx.product, idx.cwt, idx.date, idx.revenue, idx.gp, idx.status];
+                const rowFingerprint = JSON.stringify(keyCols.map(ci => (ci !== -1 ? r[ci] : null)));
+                if (seenRows.has(rowFingerprint)) { dupCount++; continue; }
+                seenRows.add(rowFingerprint);
+
+                // Only count actual/realized trades - not pipeline "Plan" or "Lost"
+                const status = idx.status !== -1 ? (r[idx.status] || "").toString().trim().toLowerCase() : "win";
+                if (status && status !== "win") { skippedNonWin++; continue; }
+
+                let yearVal = idx.year !== -1 ? (r[idx.year] || "").toString().trim() : "";
+                let monthRaw = idx.month !== -1 ? (r[idx.month] || "").toString().trim().toLowerCase() : "";
+                let monthName = monthAliasID[monthRaw] || null;
+
+                // Fallback: derive month/year from the Date column if Month/Year columns are blank
+                const dateVal = idx.date !== -1 ? r[idx.date] : null;
+                if ((!monthName || !yearVal) && dateVal) {
+                    let d = null;
+                    if (dateVal instanceof Date) d = dateVal;
+                    else if (typeof dateVal === "number") d = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+                    else d = new Date(dateVal);
+                    if (d && !isNaN(d.getTime())) {
+                        monthName = monthsList[d.getMonth()];
+                        yearVal = d.getFullYear().toString();
+                    }
+                }
+                if (!monthName || !yearVal) continue;
+
+                // Sanity guard: reject bogus years from malformed/blank date cells
+                // (e.g. an empty date serial resolving to 1899/1900 - the Excel epoch).
+                const yearNum = parseInt(yearVal, 10);
+                if (!yearNum || yearNum < 2000 || yearNum > 2100) continue;
+
+                const custClean = custRaw.replace(/\b(pt|cv|tbk|ud|inc|corp|ltd)\b\.?/gi, "").trim().replace(/\s+/g, " ").toUpperCase();
+                const principle = idx.product !== -1 ? (r[idx.product] || "General").toString().toUpperCase().trim() : "GENERAL";
+                const serviceType = idx.tradeLine !== -1 ? (r[idx.tradeLine] || "Unknown").toString().toUpperCase().trim() : "UNKNOWN";
+                const salesName = idx.name !== -1 ? normSalesName(r[idx.name]) : "HOUSE";
+
+                const key = `${custClean}|${principle}|${serviceType}|${yearVal}`;
+                if (!agg.has(key)) {
+                    agg.set(key, { customer: custClean, principle, serviceType, salesName, year: yearVal, monthMap: {} });
+                }
+                const entry = agg.get(key);
+                entry.salesName = salesName; // last-seen sales name wins
+                if (!entry.monthMap[monthName]) entry.monthMap[monthName] = { revenue: 0, gp: 0, weight: 0, pcs: 0, dimension: 0 };
+                const m = entry.monthMap[monthName];
+                m.revenue += cleanNum(r[idx.revenue]);
+                m.gp += idx.gp !== -1 ? cleanNum(r[idx.gp]) : 0;
+                m.weight += idx.cwt !== -1 ? cleanNum(r[idx.cwt]) : 0;
+                m.pcs += 1;
+            }
+
+            if (dupCount > 0) console.log(`Cust Account: skipped ${dupCount} exact-duplicate rows.`);
+            if (skippedNonWin > 0) console.log(`Cust Account: skipped ${skippedNonWin} non-"Win" (Plan/Lost) rows.`);
+
+            const result = [];
+            agg.forEach(entry => {
+                const monthlyData = monthsList.map(mName => {
+                    const m = entry.monthMap[mName] || { revenue: 0, gp: 0, weight: 0, pcs: 0, dimension: 0 };
+                    return { month: mName, revenue: m.revenue, gp: m.gp, weight: m.weight, pcs: m.pcs, dimension: m.dimension };
+                });
+                result.push({
+                    customer: entry.customer,
+                    principle: entry.principle,
+                    serviceType: entry.serviceType,
+                    salesName: entry.salesName,
+                    year: entry.year,
+                    monthlyData
+                });
+            });
+            return result;
         }
 
         // Helper: Parse Pipeline Sheet
@@ -1806,7 +1974,7 @@
                         customer: cleanCust.toUpperCase(),
                         principle: princ,
                         serviceType: serv,
-                        salesName: colSales !== -1 ? (r[colSales] || "House").toString().trim() : "House",
+                        salesName: colSales !== -1 ? normSalesName(r[colSales]) : "HOUSE",
                         year: block.year,
                         monthlyData: monthlyData
                     });
@@ -1818,9 +1986,46 @@
 
         function capitalize(s) { if (!s) return ""; return s.charAt(0).toUpperCase() + s.slice(1); }
 
+        // Normalize a sales-rep name for storage & comparison: trim + uppercase.
+        // This makes matching immune to casing differences between source files
+        // (e.g. Sales Report has "RIFAI WIBOWO", Tracker has "Rifai Wibowo") -
+        // without this, strict === / != comparisons silently fail and filters
+        // return blank even though the data is really there.
+        function normSalesName(v) {
+            const s = (v === null || v === undefined) ? "" : v.toString().trim();
+            return s ? s.toUpperCase() : "HOUSE";
+        }
+        // Robust equality check for sales-rep names used across all filters.
+        function salesEq(a, b) { return normSalesName(a) === normSalesName(b); }
+
         // --- APP STATE ---
         let allData = [], charts = {};
+        // Comparison mode for the Monthly Analysis panel: 'mom' = vs previous month,
+        // 'yoy' = vs same month, previous year.
+        let compareMode = 'mom';
+        function setCompareMode(mode) {
+            if (compareMode === mode) return;
+            compareMode = mode;
+            updateDashboard();
+        }
         const STORAGE_KEY = 'sales_dashboard_all_data';
+
+        // --- SALES TRACKER STATE (separate/comparator dataset, never merged into allData) ---
+        let trackerData = [];
+        const TRACKER_STORAGE_KEY = 'sales_dashboard_tracker_data';
+
+        function loadTrackerData() {
+            try {
+                const saved = localStorage.getItem(TRACKER_STORAGE_KEY);
+                if (saved) trackerData = JSON.parse(saved);
+            } catch (e) { console.error("Tracker load error:", e); trackerData = []; }
+        }
+
+        function saveTrackerData() {
+            try {
+                localStorage.setItem(TRACKER_STORAGE_KEY, JSON.stringify(trackerData));
+            } catch (e) { alert("Storage full or blocked (Tracker)!"); }
+        }
 
         function loadData() {
             try {
@@ -1836,6 +2041,7 @@
                     });
                     // -----------------------------------------------------
 
+                    loadTrackerData();
                     enrichSalesData(allData);
                     initFilters();
                     dashboardContent.classList.remove('hidden');
@@ -1861,10 +2067,12 @@
 
         // Dom Refs
         const fileInput = document.getElementById('fileInput'), uploadArea = document.getElementById('uploadArea'), dashboardContent = document.getElementById('dashboardContent');
+        const trackerInput = document.getElementById('trackerInput');
         const filterYear = document.getElementById('filterYear'), filterMonth = document.getElementById('filterMonth'), filterPrinciple = document.getElementById('filterPrinciple'), filterCustomer = document.getElementById('filterCustomer'), filterSales = document.getElementById('filterSales');
 
         // Handlers
         fileInput.addEventListener('change', (e) => { if (e.target.files.length) processFile(e.target.files[0]) });
+        trackerInput.addEventListener('change', (e) => { if (e.target.files.length) processTrackerFile(e.target.files[0]) });
         uploadArea.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]); });
         uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('bg-blue-50'); });
         uploadArea.addEventListener('dragleave', (e) => { e.preventDefault(); uploadArea.classList.remove('bg-blue-50'); });
@@ -1917,7 +2125,7 @@
                 const key = genKey(r);
                 if (map.has(key)) {
                     const oldRow = map.get(key);
-                    if (r.salesName) oldRow.salesName = r.salesName;
+                    if (r.salesName) oldRow.salesName = normSalesName(r.salesName);
                     r.monthlyData.forEach(mIn => {
                         const mOldIdx = oldRow.monthlyData.findIndex(m => m.month === mIn.month);
                         // If month exists, OVERWRITE if incoming is non-zero
@@ -1936,6 +2144,82 @@
             return Array.from(map.values());
         }
 
+        // --- SALES TRACKER (Pembanding) : parser & processor terpisah ---
+        // Beda dengan processFile/parseAndProcessExcel (Sales Report): file ini HANYA
+        // membaca sheet "Cust Account West/East" dan hasilnya TIDAK digabung/menimpa
+        // allData (Sales Report). Disimpan di trackerData sendiri untuk ditampilkan
+        // sbg kolom pembanding (Actual) di tabel Monthly Performance.
+        async function parseTrackerExcel(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+
+                        // Fokus ke sheet "Cust Account West" saja - sheet "... East" sengaja
+                        // di-skip karena header kolom "Name"-nya rusak di source file (jadi
+                        // "Column 1"), sehingga seluruh sales name dari East salah kebaca
+                        // "House". Daripada nge-filter datanya (yang tetap salah atribusi),
+                        // sheet itu langsung tidak diproses sampai header-nya dibetulkan.
+                        const custAccountSheetNames = workbook.SheetNames.filter(n => {
+                            const lower = n.toLowerCase();
+                            return lower.includes("cust account") && lower.includes("west");
+                        });
+                        const skippedEastSheets = workbook.SheetNames.filter(n => {
+                            const lower = n.toLowerCase();
+                            return lower.includes("cust account") && !lower.includes("west");
+                        });
+                        if (skippedEastSheets.length > 0) {
+                            console.warn(`Tracker: sheet berikut di-SKIP (bukan West, atau header rusak): ${skippedEastSheets.join(", ")}`);
+                        }
+                        let custAccountData = [];
+                        custAccountSheetNames.forEach(sn => {
+                            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sn], { header: 1 });
+                            custAccountData = custAccountData.concat(parseCustAccountSheet(rows));
+                        });
+
+                        if (custAccountData.length === 0) {
+                            reject(new Error("Sheet 'Cust Account West' tidak ditemukan (atau kosong) di file ini."));
+                            return;
+                        }
+                        resolve(custAccountData);
+                    } catch (err) { reject(err); }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function processTrackerFile(file) {
+            try {
+                const newTrackerData = await parseTrackerExcel(file);
+                // Merge history within tracker's own dataset only (never touches allData/Sales Report)
+                trackerData = mergeSalesData(trackerData, newTrackerData);
+                saveTrackerData();
+
+                // Make sure any year that only exists in the Tracker (not yet in Sales Report)
+                // is still selectable in the Year filter - otherwise the comparator column
+                // will look empty simply because the selected year never matches.
+                if (allData.length > 0) {
+                    updateYearFilter();
+                }
+
+                const years = [...new Set(newTrackerData.map(r => r.year))].sort().join(', ');
+                console.log(`Sales Tracker parsed: ${newTrackerData.length} baris (tahun: ${years})`);
+
+                if (allData.length === 0) {
+                    // No Sales Report loaded yet - the comparator table has nothing to attach to.
+                    alert(`Sales Tracker berhasil dibaca (${newTrackerData.length} baris, tahun: ${years}), tapi Sales Report belum di-upload. Upload Sales Report dulu supaya tabel Monthly Performance (dan kolom pembanding Tracker) muncul.`);
+                    return;
+                }
+
+                updateDashboard();
+                showToast(`Sales Tracker Updated! ${newTrackerData.length} baris (tahun: ${years}) - Sales Report tidak berubah.`);
+            } catch (err) {
+                alert(err);
+            }
+        }
+
         function updateYearFilter() {
             const pipeline = JSON.parse(localStorage.getItem('pipeline_sales_dashboard') || '[]');
             const pipeYears = pipeline.map(p => {
@@ -1944,7 +2228,8 @@
             }).filter(y => y);
 
             const dataYears = allData.map(d => d.year);
-            const uniqueYears = [...new Set([...dataYears, ...pipeYears])].sort().reverse();
+            const trackerYears = (typeof trackerData !== 'undefined' ? trackerData : []).map(d => d.year);
+            const uniqueYears = [...new Set([...dataYears, ...pipeYears, ...trackerYears])].sort().reverse();
 
             const current = filterYear.value;
             document.getElementById('filterYear').innerHTML = uniqueYears.map(v => `<option value="${v}">${v}</option>`).join('');
@@ -1969,7 +2254,7 @@
             // Customers
             setHtml('filterCustomer', [...new Set(allData.map(d => d.customer))].sort());
             // Sales Names
-            setHtml('filterSales', [...new Set(allData.map(d => d.salesName || "House"))].sort());
+            setHtml('filterSales', [...new Set(allData.map(d => normSalesName(d.salesName)))].sort());
             // Service Types (NEW)
             setHtml('filterServiceType', [...new Set(allData.map(d => d.serviceType))].filter(s => s && s !== 'UNKNOWN').sort());
 
@@ -2070,7 +2355,7 @@
                 if (p !== 'all' && row.principle != p) return null;
                 if (c !== 'all' && row.customer != c) return null;
                 if (s !== 'all' && row.serviceType != s) return null;
-                if (sales !== 'all' && row.salesName != sales) return null;
+                if (sales !== 'all' && !salesEq(row.salesName, sales)) return null;
 
                 // Clone row to avoid mutating original
                 const newRow = { ...row, monthlyData: [] };
@@ -2108,7 +2393,19 @@
             const stats = getTraderStats(activeData, y, m, p, c, sales);
             updateTraderKPIs(stats, y, m);
             renderCustomerHealthChart(activeData, y, p, c, sales);
-            renderPerformanceTable(filteredData, y, p, c, sales);
+
+            // Sales Tracker (comparator) - filtered the same way as Sales Report, but kept as a
+            // separate dataset. Never merged into allData/filteredData.
+            const filteredTrackerData = trackerData.filter(row => {
+                if (row.year != y) return false;
+                if (p !== 'all' && row.principle != p) return false;
+                if (c !== 'all' && row.customer != c) return false;
+                if (s !== 'all' && row.serviceType != s) return false;
+                if (sales !== 'all' && !salesEq(row.salesName, sales)) return false;
+                return true;
+            });
+
+            renderPerformanceTable(filteredData, y, p, c, sales, filteredTrackerData);
             renderMonthlyAnalysis(filteredData, y, m, p, c, sales);
         }
 
@@ -2123,10 +2420,16 @@
             const mIdx = months.indexOf(month);
             if (mIdx === -1) return;
 
-            // Previous Month identification
-            let prevYear = year, prevMonth = "";
-            if (mIdx === 0) { prevYear = (parseInt(year) - 1).toString(); prevMonth = "Dec"; }
-            else { prevMonth = months[mIdx - 1]; }
+            // Comparison period: MoM (previous calendar month) or YoY (same month, last year)
+            let prevYear, prevMonth;
+            if (compareMode === 'yoy') {
+                prevYear = (parseInt(year) - 1).toString();
+                prevMonth = month;
+            } else {
+                prevYear = year; prevMonth = "";
+                if (mIdx === 0) { prevYear = (parseInt(year) - 1).toString(); prevMonth = "Dec"; }
+                else { prevMonth = months[mIdx - 1]; }
+            }
 
             let totalCurr = 0, totalPrev = 0;
 
@@ -2135,7 +2438,7 @@
             allData.forEach(row => {
                 if (principleFilter !== 'all' && row.principle !== principleFilter) return;
                 if (customerFilter !== 'all' && row.customer !== customerFilter) return;
-                if (salesFilter && salesFilter !== 'all' && row.salesName !== salesFilter) return;
+                if (salesFilter && salesFilter !== 'all' && !salesEq(row.salesName, salesFilter)) return;
 
                 const k = row.customer;
                 if (!custMap[k]) custMap[k] = { curr: 0, prev: 0 };
@@ -2193,6 +2496,17 @@
 
             let html = `
                 <div class="flex flex-col gap-6">
+                    <!-- Compare Mode Toggle -->
+                    <div class="flex items-center gap-2 text-xs">
+                        <span class="font-bold text-slate-400 uppercase">Compare:</span>
+                        <button onclick="setCompareMode('mom')" class="px-3 py-1 rounded-full font-bold transition ${compareMode === 'mom' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}">
+                            Bulan Sebelumnya
+                        </button>
+                        <button onclick="setCompareMode('yoy')" class="px-3 py-1 rounded-full font-bold transition ${compareMode === 'yoy' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}">
+                            Bulan Sama, Tahun Lalu
+                        </button>
+                    </div>
+
                     <!-- Summary Card -->
                     <div class="${isUp ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'} border rounded-xl p-4 flex items-center justify-between">
                         <div>
@@ -2320,7 +2634,7 @@
                 if (salesFilter && salesFilter !== "all") {
                     // Check if any row for this customer matches the sales name
                     const customerRows = allData.filter(d => d.customer === cust);
-                    const hasSales = customerRows.some(d => d.salesName === salesFilter);
+                    const hasSales = customerRows.some(d => salesEq(d.salesName, salesFilter));
                     if (!hasSales) return;
                 }
 
@@ -2403,7 +2717,7 @@
             localStorage.setItem('sales_person_global', val);
         }
 
-        function renderPerformanceTable(allData, year, principleFilter, customerFilter, salesFilter) {
+        function renderPerformanceTable(allData, year, principleFilter, customerFilter, salesFilter, trackerRows) {
             const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
             const allAgg = {};
 
@@ -2411,7 +2725,7 @@
             allData.forEach(row => {
                 if (principleFilter !== 'all' && row.principle !== principleFilter) return;
                 if (customerFilter !== 'all' && row.customer !== customerFilter) return;
-                if (salesFilter && salesFilter !== 'all' && row.salesName !== salesFilter) return;
+                if (salesFilter && salesFilter !== 'all' && !salesEq(row.salesName, salesFilter)) return;
 
                 row.monthlyData.forEach(m => {
                     const k = `${row.year}-${m.month}`;
@@ -2426,6 +2740,15 @@
                         const custKey = row.customer.trim().toLowerCase();
                         allAgg[k].customers.add(custKey);
                     }
+                });
+            });
+
+            // 1b. Sales Tracker Aggregation (comparator only - separate dataset, never merged above)
+            const trackerAgg = {};
+            (trackerRows || []).forEach(row => {
+                row.monthlyData.forEach(m => {
+                    const k = `${row.year}-${m.month}`;
+                    trackerAgg[k] = (trackerAgg[k] || 0) + m.revenue;
                 });
             });
 
@@ -2480,6 +2803,23 @@
                 const rc = growRev > 0 ? 'text-green-600' : (growRev < 0 ? 'text-red-600' : 'text-slate-500');
                 const tc = growTrad > 0 ? 'text-green-600' : (growTrad < 0 ? 'text-red-600' : 'text-slate-500');
 
+                // Sales Tracker (Actual) comparator cell for this month
+                const trackerR = trackerAgg[key] || 0;
+                let trackerCell, deltaCell;
+                if (trackerR === 0) {
+                    trackerCell = `<span class="text-slate-300 text-xs">-</span>`;
+                    deltaCell = `<span class="text-slate-300 text-xs">-</span>`;
+                } else if (currR === 0) {
+                    // Sales Report belum ada untuk bulan ini, tapi Tracker sudah -> tampilkan sbg provisional
+                    trackerCell = `<span class="font-medium tracking-tight">${curF.format(trackerR)}</span><br><span class="text-[9px] font-bold text-violet-500 bg-violet-100 rounded px-1">BELUM DI-REPORT</span>`;
+                    deltaCell = `<span class="text-slate-300 text-xs">-</span>`;
+                } else {
+                    const deltaTR = currR - trackerR;
+                    const dColor = deltaTR === 0 ? 'text-slate-400' : (deltaTR > 0 ? 'text-blue-600' : 'text-amber-600');
+                    trackerCell = `<span class="font-medium tracking-tight">${curF.format(trackerR)}</span>`;
+                    deltaCell = `<span class="${dColor} text-xs font-bold">${deltaTR > 0 ? '+' : ''}${curF.format(deltaTR)}</span>`;
+                }
+
                 return `
                     <tr class="hover:bg-pink-50 transition border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-pink-50/30'}">
                         <td class="px-3 py-2 font-bold text-slate-700 border-b border-slate-100">${m}</td>
@@ -2504,6 +2844,8 @@
                         <td class="px-3 py-2 text-right border-b border-slate-100">${currC}</td>
                         <td class="px-3 py-2 text-right border-b border-slate-100 ${tc}">${diffTrad > 0 ? '+' : ''}${diffTrad}</td>
                         <td class="px-3 py-2 text-right border-b border-slate-100 ${tc} text-xs font-bold">${pctF.format(growTrad)}</td>
+                        <td class="px-3 py-2 text-right border-b border-slate-100 bg-violet-50/40">${trackerCell}</td>
+                        <td class="px-3 py-2 text-right border-b border-slate-100 bg-violet-50/40">${deltaCell}</td>
                     </tr>
                  `;
             }).join('');
@@ -2866,7 +3208,8 @@
             }
 
             loadDataFromStorage();
-            loadData(); // Load processed allData from localStorage
+            loadTrackerData(); // Load Sales Tracker (comparator) data, independent of Sales Report
+            loadData(); // Load processed allData from localStorage (this also renders the dashboard if data exists)
         });
     </script>
 </body>
