@@ -2825,11 +2825,26 @@
                 const item = { name: k, diff: diff, curr: c, prev: p };
 
                 if (p === 0 && c > 0) {
-                    // Distinguish a genuinely brand-new customer (no revenue ever before this
-                    // period) from one that's simply returning after a dormant gap - both have
-                    // "Prev: 0" for THIS specific comparison window, but they mean different things.
-                    const hadHistoryBefore = (custTimeline[k] || []).some(g => g < currentGIdx);
-                    item.subtype = hadHistoryBefore ? 'reactivated' : 'new';
+                    // Distinguish 3 kondisi yang beda-beda maknanya walau sama-sama "Prev: 0"
+                    // di window komparasi ini:
+                    // - New Customer: belum pernah ada revenue sama sekali sebelum ini.
+                    // - Reactivated: pernah punya histori trading yang STABIL (minimal 3 bulan
+                    //   aktif berturut-turut) sebelum akhirnya sempat quiet - ini "win-back"
+                    //   yang beneran berarti.
+                    // - Adhoc: sudah punya histori, tapi memang dari dulu sifatnya sporadis /
+                    //   occasional (nggak pernah sampai 3 bulan aktif berturut) - jadi quiet lalu
+                    //   order lagi itu memang pola normal dia, bukan "reaktivasi" yang istimewa.
+                    const priorActive = (custTimeline[k] || []).filter(g => g < currentGIdx);
+                    if (priorActive.length === 0) {
+                        item.subtype = 'new';
+                    } else {
+                        const activeSet = new Set(priorActive);
+                        let hadRegularStretch = false;
+                        for (const g of activeSet) {
+                            if (activeSet.has(g + 1) && activeSet.has(g + 2)) { hadRegularStretch = true; break; }
+                        }
+                        item.subtype = hadRegularStretch ? 'reactivated' : 'adhoc';
+                    }
                     reactivated.push(item);
                 } else if (c > p) {
                     growth.push(item);
@@ -2872,7 +2887,12 @@
             const lostItems = decline.filter(i => i.curr === 0);
             const declineExistingSum = declineExisting.reduce((s, i) => s + i.diff, 0);
             const lostSum = lostItems.reduce((s, i) => s + i.diff, 0);
-            const newReactSum = reactivated.reduce((s, i) => s + i.diff, 0);
+            const newItems = reactivated.filter(i => i.subtype === 'new');
+            const reactivatedItems = reactivated.filter(i => i.subtype === 'reactivated');
+            const adhocItems = reactivated.filter(i => i.subtype === 'adhoc');
+            const newSum = newItems.reduce((s, i) => s + i.diff, 0);
+            const reactivatedSum = reactivatedItems.reduce((s, i) => s + i.diff, 0);
+            const adhocSum = adhocItems.reduce((s, i) => s + i.diff, 0);
             const lostCount = lostItems.length;
 
             // % kontribusi + kumulatif tiap customer terhadap total penurunan (Pareto-style),
@@ -2935,7 +2955,9 @@
                         const segs = [
                             { label: 'Growth Existing', val: growthSum, dot: 'bg-green-500', text: 'text-green-600', items: growth },
                             { label: 'Decline Existing', val: declineExistingSum, dot: 'bg-red-400', text: 'text-red-600', items: declineExisting },
-                            { label: 'New/Reactivated', val: newReactSum, dot: 'bg-indigo-500', text: 'text-indigo-600', items: reactivated },
+                            { label: 'New Customer', val: newSum, dot: 'bg-emerald-500', text: 'text-emerald-600', items: newItems },
+                            { label: 'Reactivated', val: reactivatedSum, dot: 'bg-amber-500', text: 'text-amber-600', items: reactivatedItems },
+                            { label: 'Adhoc', val: adhocSum, dot: 'bg-sky-500', text: 'text-sky-600', items: adhocItems },
                             { label: `Lost Total (${lostCount})`, val: lostSum, dot: 'bg-rose-700', text: 'text-rose-700', items: lostItems },
                         ];
                         const totalMag = segs.reduce((s, x) => s + Math.abs(x.val), 0) || 1;
@@ -3034,6 +3056,7 @@
                                         <p class="text-xs font-bold text-slate-700 truncate" title="${item.name}">${item.name}</p>
                                         ${item.subtype === 'new' ? '<span class="shrink-0 text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">BARU</span>' : ''}
                                         ${item.subtype === 'reactivated' ? '<span class="shrink-0 text-[8px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700">AKTIF KEMBALI</span>' : ''}
+                                        ${item.subtype === 'adhoc' ? '<span class="shrink-0 text-[8px] font-bold px-1 py-0.5 rounded bg-sky-100 text-sky-700">ADHOC</span>' : ''}
                                         ${item.streak >= 2 ? `<span class="shrink-0 text-[8px] font-bold px-1 py-0.5 rounded bg-red-100 text-red-700">TURUN ${item.streak} BLN BERTURUT</span>` : ''}
                                         ${item.curr === 0 ? '<span class="shrink-0 text-[8px] font-bold px-1 py-0.5 rounded bg-rose-200 text-rose-800">LOST TOTAL</span>' : ''}
                                     </div>
@@ -3055,7 +3078,7 @@
                 </div>
             `;
 
-            html += renderList("Reactivated / New", listReact, "bg-indigo-100", "zap");
+            html += renderList("Reactivated / New / Adhoc", listReact, "bg-indigo-100", "zap");
             html += renderList("Top Growth", listGrow, "bg-green-100", "trending-up");
             html += renderList("Top Decline", listDrop, "bg-red-100", "trending-down");
 
