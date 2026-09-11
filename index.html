@@ -425,6 +425,15 @@
                     </div>
                 </div>
 
+                <!-- Trade Lane Favorit (from Sales Tracker Origin/Dest data) -->
+                <div id="tradeLaneSection" class="hidden bg-white p-6 rounded-xl shadow-lg border border-slate-100 mb-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-bold text-slate-700">Trade Lane Favorit</h3>
+                        <div class="text-xs text-slate-400" title="Dihitung dari kolom Origin/Dest di Sales Tracker (Cust Account West/East), ikut filter tahun/bulan/customer/principle/sales yang aktif.">Sumber: Sales Tracker</div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="tradeLaneLists"></div>
+                </div>
+
                 <!-- Charts Grid -->
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <div class="bg-white p-4 rounded-xl shadow-lg border border-slate-100">
@@ -2637,6 +2646,7 @@
             renderPerformanceTable(filteredData, y, p, c, sales, filteredTrackerData);
             renderMonthlyAnalysis(filteredDataForAnalysis, y, m, p, c, sales);
             updateBigPictureKPIs(filteredDataForAnalysis, y);
+            renderTradeLaneFavorites(filteredTrackerData, m);
 
             // Snapshot of what's currently on screen, used by Download Excel/PDF so the
             // export always matches the active filters without re-deriving them.
@@ -3398,6 +3408,77 @@
                     banner.classList.add('hidden');
                 }
             }
+        }
+
+        // --- Trade Lane Favorit: Export (top destination) & Import (top origin) ---
+        // Sourced purely from Sales Tracker rows (Origin/Dest only exist there, not in
+        // Sales Report). Uses the per-month `countries` breakdown already captured by
+        // parseCustAccountSheet(), so no re-parsing needed - just re-aggregate.
+        function renderTradeLaneFavorites(rows, month) {
+            const section = document.getElementById('tradeLaneSection');
+            const container = document.getElementById('tradeLaneLists');
+            if (!section || !container) return;
+
+            const exportTally = {}, importTally = {};
+            (rows || []).forEach(row => {
+                const svc = (row.serviceType || '').toUpperCase();
+                const bucket = svc === 'EXPORT' ? exportTally : (svc === 'IMPORT' ? importTally : null);
+                if (!bucket) return; // Dom / 3rd Party / Unknown - no meaningful "favorite country" for these
+                row.monthlyData.forEach(m => {
+                    if (month !== 'all' && m.month !== month) return;
+                    const countries = m.countries || {};
+                    Object.keys(countries).forEach(ctry => {
+                        if (!ctry || ctry === 'UNKNOWN') return;
+                        if (!bucket[ctry]) bucket[ctry] = { revenue: 0, weight: 0 };
+                        bucket[ctry].revenue += countries[ctry].revenue;
+                        bucket[ctry].weight += countries[ctry].weight;
+                    });
+                });
+            });
+
+            const buildList = (tally) => {
+                const entries = Object.keys(tally).map(k => ({ name: k, revenue: tally[k].revenue, weight: tally[k].weight }));
+                const grandTotal = entries.reduce((s, e) => s + e.revenue, 0); // % based on ALL countries, not just top 5
+                entries.sort((a, b) => b.revenue - a.revenue);
+                return { top: entries.slice(0, 5), grandTotal };
+            };
+
+            const exp = buildList(exportTally);
+            const imp = buildList(importTally);
+
+            if (exp.top.length === 0 && imp.top.length === 0) { section.classList.add('hidden'); return; }
+            section.classList.remove('hidden');
+
+            const compactF = new Intl.NumberFormat('id-ID', { notation: 'compact', compactDisplay: 'short' });
+            const renderMini = (title, data, dotClass, barClass) => {
+                if (data.top.length === 0) return `<div><h4 class="text-xs font-bold text-slate-500 uppercase mb-2">${title}</h4><p class="text-xs text-slate-400 italic">Belum ada data.</p></div>`;
+                return `
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full ${dotClass}"></span> ${title}
+                        </h4>
+                        <div class="space-y-2.5">
+                            ${data.top.map(item => {
+                const pct = data.grandTotal > 0 ? (item.revenue / data.grandTotal * 100) : 0;
+                return `
+                                <div>
+                                    <div class="flex justify-between text-xs mb-1">
+                                        <span class="font-bold text-slate-700">${item.name}</span>
+                                        <span class="text-slate-500">${compactF.format(item.revenue)} <span class="text-slate-400">(${pct.toFixed(0)}%)</span></span>
+                                    </div>
+                                    <div class="w-full bg-slate-100 rounded-full h-1.5">
+                                        <div class="${barClass} h-1.5 rounded-full" style="width:${pct}%"></div>
+                                    </div>
+                                </div>`;
+            }).join('')}
+                        </div>
+                    </div>
+                `;
+            };
+
+            container.innerHTML =
+                renderMini('Export Favorit (Top Destinasi)', exp, 'bg-blue-500', 'bg-blue-500') +
+                renderMini('Import Favorit (Top Origin)', imp, 'bg-purple-500', 'bg-purple-500');
         }
 
         // --- NEW: Props Handler ---
