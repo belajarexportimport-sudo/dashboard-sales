@@ -210,53 +210,77 @@
                 <!-- Filters -->
                 <div
                     class="bg-white p-4 rounded-xl shadow-lg border border-blue-100 flex flex-wrap gap-4 items-center justify-between">
-                    <div class="flex flex-wrap gap-4 items-center">
-                        <div class="flex items-center gap-2 text-slate-500 text-sm font-bold"><i data-feather="filter"
+                    <div class="flex flex-wrap gap-4 items-end">
+                        <div class="flex items-center gap-2 text-slate-500 text-sm font-bold pb-1.5"><i data-feather="filter"
                                 class="w-4 h-4"></i> Filters:</div>
-                        <select id="filterYear"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold bg-slate-50"></select>
-                        <select id="filterServiceType"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold text-indigo-700 bg-indigo-50 border-indigo-200">
-                            <option value="all">All Services</option>
-                        </select>
-                        <select id="filterMonth"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                            <!-- ... -->
-                            <option value="all">All Months (YTD)</option>
-                            <option value="Jan">Jan</option>
-                            <option value="Feb">Feb</option>
-                            <option value="Mar">Mar</option>
-                            <option value="Apr">Apr</option>
-                            <option value="May">May</option>
-                            <option value="Jun">Jun</option>
-                            <option value="Jul">Jul</option>
-                            <option value="Aug">Aug</option>
-                            <option value="Sep">Sep</option>
-                            <option value="Oct">Oct</option>
-                            <option value="Nov">Nov</option>
-                            <option value="Dec">Dec</option>
-                        </select>
-                        <select id="filterLane"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-emerald-700 bg-emerald-50 border-emerald-200">
-                            <option value="all">Lane (Dest/Origin)</option>
-                        </select>
-                        <select id="filterCommodity"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-purple-700 bg-purple-50 border-purple-200">
-                            <option value="all">Commodity</option>
-                        </select>
-                        <div class="w-px h-6 bg-slate-300 mx-2"></div>
-                        <select id="filterPrinciple"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="all">All Principles</option>
-                        </select>
-                        <select id="filterCustomer"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]">
-                            <option value="all">All Customers</option>
-                        </select>
-                        <select id="filterSales"
-                            class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-blue-700 bg-blue-50 border-blue-200">
-                            <option value="all">All Sales</option>
-                        </select>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterYear" class="text-[10px] font-semibold text-slate-400 uppercase pl-0.5">Year</label>
+                            <select id="filterYear"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold bg-slate-50"></select>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterServiceType" class="text-[10px] font-semibold text-indigo-400 uppercase pl-0.5">Service (FDX, UPS, dst)</label>
+                            <select id="filterServiceType"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold text-indigo-700 bg-indigo-50 border-indigo-200">
+                                <option value="all">All Services</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterMonth" class="text-[10px] font-semibold text-slate-400 uppercase pl-0.5">Month</label>
+                            <select id="filterMonth"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                                <!-- ... -->
+                                <option value="all">All Months (YTD)</option>
+                                <option value="Jan">Jan</option>
+                                <option value="Feb">Feb</option>
+                                <option value="Mar">Mar</option>
+                                <option value="Apr">Apr</option>
+                                <option value="May">May</option>
+                                <option value="Jun">Jun</option>
+                                <option value="Jul">Jul</option>
+                                <option value="Aug">Aug</option>
+                                <option value="Sep">Sep</option>
+                                <option value="Oct">Oct</option>
+                                <option value="Nov">Nov</option>
+                                <option value="Dec">Dec</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterLane" class="text-[10px] font-semibold text-emerald-400 uppercase pl-0.5">Lane (Dest/Origin)</label>
+                            <select id="filterLane"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-emerald-700 bg-emerald-50 border-emerald-200">
+                                <option value="all">Lane (Dest/Origin)</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterCommodity" class="text-[10px] font-semibold text-purple-400 uppercase pl-0.5">Commodity</label>
+                            <select id="filterCommodity"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-purple-700 bg-purple-50 border-purple-200">
+                                <option value="all">Commodity</option>
+                            </select>
+                        </div>
+                        <div class="w-px h-9 bg-slate-300 mx-2"></div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterPrinciple" class="text-[10px] font-semibold text-slate-400 uppercase pl-0.5">Principle</label>
+                            <select id="filterPrinciple"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="all">All Principles</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterCustomer" class="text-[10px] font-semibold text-slate-400 uppercase pl-0.5">Customer</label>
+                            <select id="filterCustomer"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]">
+                                <option value="all">All Customers</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <label for="filterSales" class="text-[10px] font-semibold text-blue-400 uppercase pl-0.5">Sales</label>
+                            <select id="filterSales"
+                                class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 text-blue-700 bg-blue-50 border-blue-200">
+                                <option value="all">All Sales</option>
+                            </select>
+                        </div>
                     </div>
 
                     <!-- SALES & FORECAST CONTROL -->
@@ -2953,12 +2977,12 @@
                         const signed = (x) => `${x > 0 ? '+' : (x < 0 ? '' : '')}${compactF(x)}`;
                         const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
                         const segs = [
-                            { label: 'Growth Existing', val: growthSum, dot: 'bg-green-500', text: 'text-green-600', items: growth },
-                            { label: 'Decline Existing', val: declineExistingSum, dot: 'bg-red-400', text: 'text-red-600', items: declineExisting },
-                            { label: 'New Customer', val: newSum, dot: 'bg-emerald-500', text: 'text-emerald-600', items: newItems },
-                            { label: 'Reactivated', val: reactivatedSum, dot: 'bg-amber-500', text: 'text-amber-600', items: reactivatedItems },
-                            { label: 'Adhoc', val: adhocSum, dot: 'bg-sky-500', text: 'text-sky-600', items: adhocItems },
-                            { label: `Lost Total (${lostCount})`, val: lostSum, dot: 'bg-rose-700', text: 'text-rose-700', items: lostItems },
+                            { label: 'Growth Existing', desc: 'Customer lama, revenue-nya naik dibanding periode sebelumnya.', val: growthSum, dot: 'bg-green-500', text: 'text-green-600', items: growth },
+                            { label: 'Decline Existing', desc: 'Customer lama, masih ada revenue tapi turun dibanding periode sebelumnya.', val: declineExistingSum, dot: 'bg-red-400', text: 'text-red-600', items: declineExisting },
+                            { label: 'New Customer', desc: 'Belum pernah ada revenue sama sekali sebelum periode ini.', val: newSum, dot: 'bg-emerald-500', text: 'text-emerald-600', items: newItems },
+                            { label: 'Reactivated', desc: 'Dulu pernah aktif stabil ≥3 bulan berturut, sempat quiet, sekarang order lagi.', val: reactivatedSum, dot: 'bg-amber-500', text: 'text-amber-600', items: reactivatedItems },
+                            { label: 'Adhoc', desc: 'Sudah punya histori, tapi memang dari dulu order-nya sesekali/nggak rutin.', val: adhocSum, dot: 'bg-sky-500', text: 'text-sky-600', items: adhocItems },
+                            { label: `Lost Total (${lostCount})`, desc: 'Revenue-nya persis nol di periode ini.', val: lostSum, dot: 'bg-rose-700', text: 'text-rose-700', items: lostItems },
                         ];
                         const totalMag = segs.reduce((s, x) => s + Math.abs(x.val), 0) || 1;
                         const visibleSegs = segs.filter(s => s.val !== 0);
@@ -3003,13 +3027,27 @@
                             `;
                         }).join('');
 
-                        const chipsHtml = segs.map(s => `
-                            <div class="flex items-center gap-1.5">
+                        const chipsHtml = segs.map((s, i) => {
+                            const descTipId = `desc-tip-${i}`;
+                            return `
+                            <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)]">
                                 <span class="w-2 h-2 rounded-full ${s.dot} shrink-0"></span>
-                                <span class="text-slate-500">${s.label}</span>
-                                <span class="font-bold ${s.text} ml-auto">${signed(s.val)}</span>
+                                <span class="text-slate-500 flex items-center gap-1 min-w-0 truncate">
+                                    <span class="truncate">${s.label}</span>
+                                    <span class="relative inline-flex shrink-0">
+                                        <button type="button"
+                                            onclick="event.stopPropagation(); showBridgeTip('${descTipId}')"
+                                            onmouseenter="showBridgeTip('${descTipId}')" onmouseleave="hideBridgeTip('${descTipId}')"
+                                            class="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-500 text-[8px] font-bold leading-[14px] text-center hover:bg-slate-300 hover:text-slate-700 transition">i</button>
+                                        <div id="${descTipId}" class="bridge-tip hidden absolute z-40 bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-40 bg-slate-800 text-white text-[10px] leading-snug rounded-md px-2 py-1.5 shadow-xl">
+                                            ${s.desc}
+                                        </div>
+                                    </span>
+                                </span>
+                                <span class="font-bold ${s.text} ml-auto shrink-0">${signed(s.val)}</span>
                             </div>
-                        `).join('');
+                        `;
+                        }).join('');
                         return `
                         <div class="border border-slate-100 bg-white rounded-xl p-4 shadow-lg">
                             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -3029,7 +3067,7 @@
                                     ${overlayHtml}
                                 </div>
                             </div>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-2 text-xs">
+                            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
                                 ${chipsHtml}
                             </div>
                         </div>
