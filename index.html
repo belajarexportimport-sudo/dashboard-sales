@@ -3069,7 +3069,7 @@
                             const alignCls = idx === 0 ? 'left-0' : (idx === visibleSegs.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2');
                             return `
                                 <div class="relative h-full" style="width:${pct}%"
-                                     onmouseenter="showBridgeTip('${tipId}')" onmouseleave="hideBridgeTip('${tipId}')"
+                                     onmouseenter="showBridgeTip('${tipId}')"
                                      onclick="event.stopPropagation(); showBridgeTip('${tipId}')">
                                     <div id="${tipId}" class="bridge-tip absolute bottom-full ${alignCls} mb-2 hidden z-30 w-56 bg-white border border-slate-200 rounded-lg shadow-xl p-2.5 text-xs">
                                         <div class="flex items-center justify-between mb-1.5 pb-1.5 border-b border-slate-100">
@@ -3092,7 +3092,7 @@
                                 <span class="relative inline-flex shrink-0">
                                     <button type="button"
                                         onclick="event.stopPropagation(); showBridgeTip('${descTipId}')"
-                                        onmouseenter="showBridgeTip('${descTipId}')" onmouseleave="hideBridgeTip('${descTipId}')"
+                                        onmouseenter="showBridgeTip('${descTipId}')"
                                         class="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-500 text-[8px] font-bold leading-[14px] text-center hover:bg-slate-300 hover:text-slate-700 transition">i</button>
                                     <div id="${descTipId}" class="bridge-tip hidden absolute z-40 bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-40 bg-slate-800 text-white text-[10px] leading-snug rounded-md px-2 py-1.5 shadow-xl">
                                         ${s.desc}
