@@ -3429,15 +3429,18 @@
                     const countries = m.countries || {};
                     Object.keys(countries).forEach(ctry => {
                         if (!ctry || ctry === 'UNKNOWN') return;
-                        if (!bucket[ctry]) bucket[ctry] = { revenue: 0, weight: 0 };
+                        if (!bucket[ctry]) bucket[ctry] = { revenue: 0, weight: 0, customers: {} };
                         bucket[ctry].revenue += countries[ctry].revenue;
                         bucket[ctry].weight += countries[ctry].weight;
+                        // Attribute this month's revenue for this country to the customer on
+                        // this record - powers the "who ships to this country" hover breakdown.
+                        bucket[ctry].customers[row.customer] = (bucket[ctry].customers[row.customer] || 0) + countries[ctry].revenue;
                     });
                 });
             });
 
             const buildList = (tally) => {
-                const entries = Object.keys(tally).map(k => ({ name: k, revenue: tally[k].revenue, weight: tally[k].weight }));
+                const entries = Object.keys(tally).map(k => ({ name: k, revenue: tally[k].revenue, weight: tally[k].weight, customers: tally[k].customers }));
                 const grandTotal = entries.reduce((s, e) => s + e.revenue, 0); // % based on ALL countries, not just top 5
                 entries.sort((a, b) => b.revenue - a.revenue);
                 return { top: entries.slice(0, 5), grandTotal };
@@ -3450,7 +3453,10 @@
             section.classList.remove('hidden');
 
             const compactF = new Intl.NumberFormat('id-ID', { notation: 'compact', compactDisplay: 'short' });
-            const renderMini = (title, data, dotClass, barClass) => {
+            const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            let tipCounter = 0;
+
+            const renderMini = (title, data, dotClass, barClass, prefix) => {
                 if (data.top.length === 0) return `<div><h4 class="text-xs font-bold text-slate-500 uppercase mb-2">${title}</h4><p class="text-xs text-slate-400 italic">Belum ada data.</p></div>`;
                 return `
                     <div>
@@ -3460,14 +3466,34 @@
                         <div class="space-y-2.5">
                             ${data.top.map(item => {
                 const pct = data.grandTotal > 0 ? (item.revenue / data.grandTotal * 100) : 0;
+                const tipId = `lane-tip-${prefix}-${tipCounter++}`;
+                const custSorted = Object.keys(item.customers).map(c => ({ name: c, rev: item.customers[c] })).sort((a, b) => b.rev - a.rev);
+                const top8 = custSorted.slice(0, 8);
+                const restCount = custSorted.length - top8.length;
+                const custRows = top8.map(c => `
+                                    <div class="flex items-center justify-between gap-3 py-0.5">
+                                        <span class="truncate text-slate-600">${esc(c.name)}</span>
+                                        <span class="font-semibold text-slate-700 shrink-0">${compactF.format(c.rev)}</span>
+                                    </div>
+                                `).join('');
                 return `
-                                <div>
-                                    <div class="flex justify-between text-xs mb-1">
-                                        <span class="font-bold text-slate-700">${item.name}</span>
+                                <div class="relative"
+                                     onmouseenter="showBridgeTip('${tipId}')"
+                                     onclick="event.stopPropagation(); showBridgeTip('${tipId}')">
+                                    <div class="flex justify-between text-xs mb-1 cursor-pointer group">
+                                        <span class="font-bold text-slate-700 group-hover:text-blue-600 underline decoration-dotted decoration-slate-300 underline-offset-2">${esc(item.name)}</span>
                                         <span class="text-slate-500">${compactF.format(item.revenue)} <span class="text-slate-400">(${pct.toFixed(0)}%)</span></span>
                                     </div>
                                     <div class="w-full bg-slate-100 rounded-full h-1.5">
                                         <div class="${barClass} h-1.5 rounded-full" style="width:${pct}%"></div>
+                                    </div>
+                                    <div id="${tipId}" class="bridge-tip absolute top-full left-0 mt-1.5 hidden z-30 w-60 bg-white border border-slate-200 rounded-lg shadow-xl p-2.5 text-xs">
+                                        <div class="flex items-center justify-between mb-1.5 pb-1.5 border-b border-slate-100">
+                                            <span class="font-bold text-slate-700">${esc(item.name)}</span>
+                                            <span class="font-bold text-slate-500">${custSorted.length} customer</span>
+                                        </div>
+                                        ${custRows || '<p class="text-slate-400 italic">Tidak ada detail.</p>'}
+                                        ${restCount > 0 ? `<div class="text-slate-400 mt-1 pt-1 border-t border-slate-100">+${restCount} customer lainnya</div>` : ''}
                                     </div>
                                 </div>`;
             }).join('')}
@@ -3477,8 +3503,8 @@
             };
 
             container.innerHTML =
-                renderMini('Export Favorit (Top Destinasi)', exp, 'bg-blue-500', 'bg-blue-500') +
-                renderMini('Import Favorit (Top Origin)', imp, 'bg-purple-500', 'bg-purple-500');
+                renderMini('Export Favorit (Top Destinasi)', exp, 'bg-blue-500', 'bg-blue-500', 'exp') +
+                renderMini('Import Favorit (Top Origin)', imp, 'bg-purple-500', 'bg-purple-500', 'imp');
         }
 
         // --- NEW: Props Handler ---
