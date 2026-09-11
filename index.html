@@ -219,7 +219,7 @@
                                 class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold bg-slate-50"></select>
                         </div>
                         <div class="flex flex-col gap-0.5">
-                            <label for="filterServiceType" class="text-[10px] font-semibold text-indigo-400 uppercase pl-0.5">Service (FDX, UPS, dst)</label>
+                            <label for="filterServiceType" class="text-[10px] font-semibold text-indigo-400 uppercase pl-0.5" title="Untuk data dari Rev Rifai (Sales Report): kode carrier (FDX, UPS, dst). Untuk data dari Sales Tracker (Cust Account): kode Trade Line (AE=Air Export, AI=Air Import, dst).">Service / Trade Line</label>
                             <select id="filterServiceType"
                                 class="border rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-bold text-indigo-700 bg-indigo-50 border-indigo-200">
                                 <option value="all">All Services</option>
@@ -1699,7 +1699,9 @@
                 year: findCol(["year"]),
                 revenue: findCol(["revenue"]),
                 gp: findCol(["gp"]),
-                status: findCol(["status"])
+                status: findCol(["status"]),
+                origin: findCol(["origin"]),
+                dest: findCol(["dest"])
             };
             // Fallback for sheets where the sales-rep column header wasn't renamed from the
             // template default (e.g. "Cust Account East" literally has "Column 1" instead of
@@ -1770,18 +1772,36 @@
                 const serviceType = idx.tradeLine !== -1 ? (r[idx.tradeLine] || "Unknown").toString().toUpperCase().trim() : "UNKNOWN";
                 const salesName = idx.name !== -1 ? normSalesName(r[idx.name]) : "HOUSE";
 
+                // Origin/Dest -> derive the trade-partner "Country" (whichever side isn't ID)
+                // and the raw "Lane" (Origin -> Dest) for a more granular breakdown.
+                const origin = idx.origin !== -1 ? (r[idx.origin] || "").toString().trim().toUpperCase() : "";
+                const dest = idx.dest !== -1 ? (r[idx.dest] || "").toString().trim().toUpperCase() : "";
+                let country = "UNKNOWN";
+                if (origin === "ID" && dest) country = dest;
+                else if (dest === "ID" && origin) country = origin;
+                else country = dest || origin || "UNKNOWN";
+                const lane = (origin || "?") + " \u2192 " + (dest || "?");
+
                 const key = `${custClean}|${principle}|${serviceType}|${yearVal}`;
                 if (!agg.has(key)) {
                     agg.set(key, { customer: custClean, principle, serviceType, salesName, year: yearVal, monthMap: {} });
                 }
                 const entry = agg.get(key);
                 entry.salesName = salesName; // last-seen sales name wins
-                if (!entry.monthMap[monthName]) entry.monthMap[monthName] = { revenue: 0, gp: 0, weight: 0, pcs: 0, dimension: 0 };
+                if (!entry.monthMap[monthName]) entry.monthMap[monthName] = { revenue: 0, gp: 0, weight: 0, pcs: 0, dimension: 0, countries: {}, lanes: {} };
                 const m = entry.monthMap[monthName];
-                m.revenue += cleanNum(r[idx.revenue]);
+                const rev = cleanNum(r[idx.revenue]);
+                const wt = idx.cwt !== -1 ? cleanNum(r[idx.cwt]) : 0;
+                m.revenue += rev;
                 m.gp += idx.gp !== -1 ? cleanNum(r[idx.gp]) : 0;
-                m.weight += idx.cwt !== -1 ? cleanNum(r[idx.cwt]) : 0;
+                m.weight += wt;
                 m.pcs += 1;
+                if (!m.countries[country]) m.countries[country] = { revenue: 0, weight: 0 };
+                m.countries[country].revenue += rev;
+                m.countries[country].weight += wt;
+                if (!m.lanes[lane]) m.lanes[lane] = { revenue: 0, weight: 0 };
+                m.lanes[lane].revenue += rev;
+                m.lanes[lane].weight += wt;
             }
 
             if (dupCount > 0) console.log(`Cust Account: skipped ${dupCount} exact-duplicate rows.`);
@@ -1790,8 +1810,17 @@
             const result = [];
             agg.forEach(entry => {
                 const monthlyData = monthsList.map(mName => {
-                    const m = entry.monthMap[mName] || { revenue: 0, gp: 0, weight: 0, pcs: 0, dimension: 0 };
-                    return { month: mName, revenue: m.revenue, gp: m.gp, weight: m.weight, pcs: m.pcs, dimension: m.dimension };
+                    const m = entry.monthMap[mName] || { revenue: 0, gp: 0, weight: 0, pcs: 0, dimension: 0, countries: {}, lanes: {} };
+                    // Feed the Origin->Dest breakdown into the existing "lane" field (same one the
+                    // Shipment List enrichment + "Lane" filter dropdown already use) so Tracker-sourced
+                    // rows are filterable/browsable by lane even without a matching Shipment List entry.
+                    // Pick the lane with the most revenue that month as the representative value.
+                    let dominantLane = "";
+                    let bestRev = -Infinity;
+                    Object.keys(m.lanes || {}).forEach(laneKey => {
+                        if (m.lanes[laneKey].revenue > bestRev) { bestRev = m.lanes[laneKey].revenue; dominantLane = laneKey; }
+                    });
+                    return { month: mName, revenue: m.revenue, gp: m.gp, weight: m.weight, pcs: m.pcs, dimension: m.dimension, countries: m.countries, lanes: m.lanes, lane: dominantLane };
                 });
                 result.push({
                     customer: entry.customer,
@@ -1899,6 +1928,16 @@
             }
 
             return newPipe;
+        }
+
+        // Human-readable label for the "Service / Trade Line" filter. This field is dual-purpose:
+        // rows from the classic Sales Report (Rev Rifai pivot) put a carrier code here (FDX, UPS...),
+        // while rows from the Sales Tracker (Cust Account sheets) put a Trade Line code here
+        // (AE/AI/SE/SI). We only translate the codes we recognize; anything else (carrier codes)
+        // is shown as-is.
+        function serviceTypeLabel(code) {
+            const map = { 'AE': 'Air Export (AE)', 'AI': 'Air Import (AI)', 'SE': 'Sea Export (SE)', 'SI': 'Sea Import (SI)' };
+            return map[code] || code;
         }
 
         function cleanNum(val) {
@@ -2346,11 +2385,13 @@
                 trackerData = mergeSalesData(trackerData, newTrackerData);
                 saveTrackerData();
 
-                // Make sure any year that only exists in the Tracker (not yet in Sales Report)
-                // is still selectable in the Year filter - otherwise the comparator column
-                // will look empty simply because the selected year never matches.
+                // Make sure any year/principle/customer/sales/service-code/lane that only exists in
+                // the Tracker (not yet in Sales Report) is still selectable in the filters -
+                // otherwise the comparator column (or an AE/AI/Lane filter) can look empty simply
+                // because the dropdown never offered that value to begin with.
                 if (allData.length > 0) {
                     updateYearFilter();
+                    refreshFilterOptions();
                 }
 
                 const years = [...new Set(newTrackerData.map(r => r.year))].sort().join(', ');
@@ -2388,34 +2429,49 @@
             else if (uniqueYears.length > 0) filterYear.value = uniqueYears[0];
         }
 
-        function initFilters() {
-            if (!allData || allData.length === 0) return;
+        // Rebuild a dropdown's <option> list from a fresh set of values while preserving whatever
+        // the user currently has selected (falls back to "all" if the old selection no longer
+        // exists). Used for every filter EXCEPT Year, which has its own updateYearFilter().
+        function setHtmlPreserve(id, list, labelFn) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const toLabel = labelFn || (v => v);
+            const current = el.value;
+            el.innerHTML = '<option value="all">All</option>' + list.map(v => `<option value="${v}">${toLabel(v)}</option>`).join('');
+            el.value = list.includes(current) ? current : 'all';
+        }
 
-            const setHtml = (id, list) => {
-                const el = document.getElementById(id);
-                if (el) el.innerHTML = (id !== 'filterYear' ? '<option value="all">All</option>' : '') + list.map(v => `<option value="${v}">${v}</option>`).join('');
-            };
+        // Rebuilds Principle/Customer/Sales/ServiceType/Lane/Commodity dropdowns from BOTH the
+        // Sales Report (allData) and the Sales Tracker (trackerData) - so a code/lane/customer that
+        // only exists in one of the two sources (e.g. AE/AI trade-line codes, which usually only
+        // come from the Tracker's "Cust Account" sheets) still shows up as a selectable option.
+        function refreshFilterOptions() {
+            const trk = (typeof trackerData !== 'undefined' ? trackerData : []);
+            const combined = [...allData, ...trk];
+            if (combined.length === 0) return;
 
-            updateYearFilter();
+            setHtmlPreserve('filterPrinciple', [...new Set(combined.map(d => d.principle))].sort());
+            setHtmlPreserve('filterCustomer', [...new Set(combined.map(d => d.customer))].sort());
+            setHtmlPreserve('filterSales', [...new Set(combined.map(d => normSalesName(d.salesName)))].sort());
+            // Service Types - value stays the raw code (AE/AI/FDX/...), label is human-readable
+            setHtmlPreserve('filterServiceType', [...new Set(combined.map(d => d.serviceType))].filter(s => s && s !== 'UNKNOWN').sort(), serviceTypeLabel);
 
-            // Principles
-            setHtml('filterPrinciple', [...new Set(allData.map(d => d.principle))].sort());
-            // Customers
-            setHtml('filterCustomer', [...new Set(allData.map(d => d.customer))].sort());
-            // Sales Names
-            setHtml('filterSales', [...new Set(allData.map(d => normSalesName(d.salesName)))].sort());
-            // Service Types (NEW)
-            setHtml('filterServiceType', [...new Set(allData.map(d => d.serviceType))].filter(s => s && s !== 'UNKNOWN').sort());
-
-            // New Filters (Lane & Commodity) - These come from enriched monthly data
+            // Lane & Commodity - come from enriched/parsed monthly data
             const lanes = new Set();
             const comms = new Set();
-            allData.forEach(r => r.monthlyData.forEach(m => {
+            combined.forEach(r => r.monthlyData.forEach(m => {
                 if (m.lane) lanes.add(m.lane);
                 if (m.commodity) comms.add(m.commodity);
             }));
-            setHtml('filterLane', [...lanes].sort());
-            setHtml('filterCommodity', [...comms].sort());
+            setHtmlPreserve('filterLane', [...lanes].sort());
+            setHtmlPreserve('filterCommodity', [...comms].sort());
+        }
+
+        function initFilters() {
+            if (!allData || allData.length === 0) return;
+
+            updateYearFilter();
+            refreshFilterOptions();
 
             // Populate Datalist for Pipeline
             const uniqueCust = [...new Set(allData.map(d => d.customer))].sort();
@@ -3032,17 +3088,15 @@
                             return `
                             <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05)]">
                                 <span class="w-2 h-2 rounded-full ${s.dot} shrink-0"></span>
-                                <span class="text-slate-500 flex items-center gap-1 min-w-0 truncate">
-                                    <span class="truncate">${s.label}</span>
-                                    <span class="relative inline-flex shrink-0">
-                                        <button type="button"
-                                            onclick="event.stopPropagation(); showBridgeTip('${descTipId}')"
-                                            onmouseenter="showBridgeTip('${descTipId}')" onmouseleave="hideBridgeTip('${descTipId}')"
-                                            class="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-500 text-[8px] font-bold leading-[14px] text-center hover:bg-slate-300 hover:text-slate-700 transition">i</button>
-                                        <div id="${descTipId}" class="bridge-tip hidden absolute z-40 bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-40 bg-slate-800 text-white text-[10px] leading-snug rounded-md px-2 py-1.5 shadow-xl">
-                                            ${s.desc}
-                                        </div>
-                                    </span>
+                                <span class="text-slate-500 min-w-0 truncate">${s.label}</span>
+                                <span class="relative inline-flex shrink-0">
+                                    <button type="button"
+                                        onclick="event.stopPropagation(); showBridgeTip('${descTipId}')"
+                                        onmouseenter="showBridgeTip('${descTipId}')" onmouseleave="hideBridgeTip('${descTipId}')"
+                                        class="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-500 text-[8px] font-bold leading-[14px] text-center hover:bg-slate-300 hover:text-slate-700 transition">i</button>
+                                    <div id="${descTipId}" class="bridge-tip hidden absolute z-40 bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-40 bg-slate-800 text-white text-[10px] leading-snug rounded-md px-2 py-1.5 shadow-xl">
+                                        ${s.desc}
+                                    </div>
                                 </span>
                                 <span class="font-bold ${s.text} ml-auto shrink-0">${signed(s.val)}</span>
                             </div>
