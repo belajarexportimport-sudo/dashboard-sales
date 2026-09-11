@@ -3286,10 +3286,16 @@
                     return p ? p.rev : 0;
                 };
 
-                timeline.forEach((point) => {
-                    if (point.year != year) return;
-                    if (month !== 'all' && point.month !== month) return;
+                // When a specific month is selected, evaluate that one point. When "All" months
+                // is selected, evaluate ONLY the most recent point within that year (their current
+                // status as of the latest available month) - NOT every month in the year. Looping
+                // over all 12 months and pushing each one used to count the same customer up to
+                // 12x when "All" was selected.
+                const yearPoints = timeline.filter(t => t.year == year && (month === 'all' || t.month === month));
+                if (yearPoints.length === 0) return;
+                const point = yearPoints[yearPoints.length - 1]; // yearPoints inherits timeline's ascending gIdx order
 
+                {
                     const p1 = getGlobalRev(point, 1), p2 = getGlobalRev(point, 2), p3 = getGlobalRev(point, 3);
                     const princDisplay = principleFilter !== 'all' ? principleFilter : Array.from(selectedPrinciples[cust])[0];
 
@@ -3331,7 +3337,7 @@
                         adhocCustomers.push({ customer: cust, principle: princDisplay, month: point.month, rev: point.rev, vals: [point.rev, p1, p2] });
                         revBySegment.adhoc += point.rev;
                     }
-                });
+                }
             });
             console.log(`DEBUG STATS [${year} ${month}]: NT=${newTraders.length}, RC=${regularCustomers.length}, LC=${lostCustomers.length}, AC=${adhocCustomers.length}`);
             return { newTraders, lostCustomers, regularCustomers, adhocCustomers, revBySegment };
